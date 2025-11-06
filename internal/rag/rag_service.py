@@ -210,12 +210,17 @@ class RAGService:
         try:
             if top_k is None:
                 top_k = self.top_k
+            else:
+                # 确保 top_k 是整数类型（可能从工具调用传入字符串）
+                top_k = int(top_k)
             
             if use_reranker is None:
                 use_reranker = self.use_reranker
             
             if rerank_top_k is None:
                 rerank_top_k = top_k
+            else:
+                rerank_top_k = int(rerank_top_k)
             
             logger.info(f"搜索查询: {query[:50]}...")
             
@@ -238,6 +243,8 @@ class RAGService:
             
             # 2. 向量检索（如果使用 Reranker，检索更多候选）
             retrieval_top_k = top_k * 3 if use_reranker else top_k
+            # 限制最大值，避免超过 Milvus 的 limit 限制
+            retrieval_top_k = min(retrieval_top_k, 512)
             
             results = self.vector_db.search_vectors(
                 collection_name=self.collection_name,

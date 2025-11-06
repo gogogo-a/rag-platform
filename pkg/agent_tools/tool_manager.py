@@ -13,6 +13,7 @@ from pkg.agent_tools.ip_location import ip_location
 from pkg.agent_tools.email_sender import email_sender
 from pkg.agent_tools.poi_search import poi_search
 from pkg.agent_tools.geocode import geocode
+from pkg.agent_tools.mongodb_query import mongodb_query
 
 
 # ==================== 所有可用工具列表 ====================
@@ -26,6 +27,7 @@ ALL_TOOLS = [
     email_sender,
     poi_search,
     geocode,
+    mongodb_query,
 ]
 
 

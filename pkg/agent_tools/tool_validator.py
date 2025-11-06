@@ -100,6 +100,10 @@ PARAM_TRANSFORMERS = {
         "content": lambda x: _unescape_string(x) if x else x,
         "html_content": lambda x: _unescape_string(x) if x else x,
     },
+    # mongodb_query 的 JSON 参数不需要任何转换，保持原样
+    "mongodb_query": {
+        # 显式声明不转换（占位，实际不做任何处理）
+    },
 }
 
 
