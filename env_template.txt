@@ -79,3 +79,11 @@ MAX_TOKEN_LIMIT_FOR_SUMMARY=6400
 # 默认值：10（即每10条新消息生成一次总结）
 SUMMARY_MESSAGE_THRESHOLD=10
 
+
+# ==================== 高德地图服务配置 ====================
+
+# 高德地图 Web 服务 API Key（用于天气查询等服务）
+# 申请地址: https://console.amap.com/dev/key/app
+# 注意：请申请 "Web服务" 类型的 Key，不是 "Web端(JS API)" 类型
+GAODE_API_KEY=
+

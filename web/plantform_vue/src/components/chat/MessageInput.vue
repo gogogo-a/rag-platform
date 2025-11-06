@@ -100,6 +100,43 @@ const showThinking = ref(true) // 默认显示思考过程
 const fileInputRef = ref(null)
 const textareaRef = ref(null)
 const isDragging = ref(false) // 拖拽状态
+const userLocation = ref(null) // 用户位置信息
+
+// 获取用户位置信息
+const getUserLocation = () => {
+  return new Promise((resolve) => {
+    // 检查浏览器是否支持地理位置
+    if (!navigator.geolocation) {
+      console.warn('浏览器不支持地理定位')
+      resolve(null)
+      return
+    }
+    
+    // 获取位置信息，设置超时时间为 5 秒
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const locationData = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          timestamp: new Date(position.timestamp).toISOString()
+        }
+        console.log('获取位置信息成功:', locationData)
+        resolve(locationData)
+      },
+      (error) => {
+        console.warn('获取位置信息失败:', error.message)
+        // 即使失败也不影响消息发送
+        resolve(null)
+      },
+      {
+        enableHighAccuracy: true, // 高精度模式
+        timeout: 5000, // 5秒超时
+        maximumAge: 60000 // 使用1分钟内的缓存位置
+      }
+    )
+  })
+}
 
 // 切换思考过程显示
 const handleToggleThinking = () => {
@@ -150,10 +187,14 @@ const handleSend = async () => {
   isSending.value = true
 
   try {
+    // 获取位置信息（异步，不阻塞消息发送）
+    const location = await getUserLocation()
+    
     await emit('send', {
       content: message,
       showThinking: showThinking.value,
-      files: files // 传递文件列表
+      files: files, // 传递文件列表
+      location: location // 传递位置信息
     })
   } catch (error) {
     console.error('发送消息失败:', error)

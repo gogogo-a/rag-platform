@@ -7,6 +7,12 @@ from typing import Dict, List, Callable, Any
 # 导入所有工具
 from pkg.agent_tools.knowledge_search import knowledge_search
 from pkg.agent_tools.web_search import web_search
+from pkg.agent_tools.weather_query import weather_query
+from pkg.agent_tools.route_planning import route_planning
+from pkg.agent_tools.ip_location import ip_location
+from pkg.agent_tools.email_sender import email_sender
+from pkg.agent_tools.poi_search import poi_search
+from pkg.agent_tools.geocode import geocode
 
 
 # ==================== 所有可用工具列表 ====================
@@ -14,6 +20,12 @@ from pkg.agent_tools.web_search import web_search
 ALL_TOOLS = [
     knowledge_search,
     web_search,
+    weather_query,
+    route_planning,
+    ip_location,
+    email_sender,
+    poi_search,
+    geocode,
 ]
 
 

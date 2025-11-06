@@ -32,6 +32,7 @@ async def send_message(
     send_name: Optional[str] = Form(None, description="发送者昵称（可选）"),
     send_avatar: Optional[str] = Form(None, description="发送者头像URL（可选）"),
     show_thinking: str = Form("false", description="是否显示思考过程"),
+    location: Optional[str] = Form(None, description="用户位置信息（JSON字符串，包含经纬度等）"),
     file: Optional[UploadFile] = File(None, description="上传的文件（可选，支持文档和图片：.pdf/.docx/.pptx/.xlsx/.csv/.html/.txt/.md/.rtf/.epub/.json/.xml/.jpg/.jpeg/.png/.webp/.gif/.bmp/.tiff）")
 ):
     """
@@ -45,6 +46,7 @@ async def send_message(
     - **send_name**: 发送者昵称（可选，使用token中的昵称）
     - **send_avatar**: 发送者头像URL（可选）
     - **show_thinking**: 是否显示思考过程（默认 False）
+    - **location**: 用户位置信息（可选，JSON字符串，包含经纬度等）
     - **file**: 上传的文件（可选，支持文档和图片格式）
     
     **文件上传说明：**
@@ -121,9 +123,11 @@ async def send_message(
     """
     try:
         # 🔥 调试：打印所有接收到的参数
-        logger.info(f"📥 接收到的参数: content={content}, session_id={session_id}, show_thinking={show_thinking}, has_file={file is not None}")
+        logger.info(f"📥 接收到的参数: content={content}, session_id={session_id}, show_thinking={show_thinking}, has_file={file is not None}, has_location={location is not None}")
         if file:
             logger.info(f"📎 文件信息: filename={file.filename}, content_type={file.content_type}")
+        if location:
+            logger.info(f"📍 位置信息: {location}")
         
         # 验证必填参数
         if not content:
@@ -193,7 +197,8 @@ async def send_message(
                     file_size=file_size,
                     file_content=file_content,  # 🔥 文档内容（已解析）
                     file_bytes=file_bytes,  # 🔥 图片字节流（未解析，Service 层流式处理）
-                    show_thinking=show_thinking
+                    show_thinking=show_thinking,
+                    location=location  # 🔥 用户位置信息（GPS 经纬度，用于 POI 搜索、天气查询、路线规划等）
                 ):
                     # 格式化为 SSE 格式
                     event_type = event.get("event", "message")

@@ -107,21 +107,32 @@ class EmailService:
             msg['To'] = recipient
             msg['Subject'] = subject
             
+            # 确保 message 不为空
+            if not message or len(message.strip()) == 0:
+                if html_message:
+                    # 如果有 HTML 但没有纯文本，生成一个简单的备份
+                    import re
+                    message = re.sub(r'<[^>]+>', '', html_message)
+                    message = re.sub(r'\s+', ' ', message).strip()
+                    message = message if message else "请在支持 HTML 的邮件客户端中查看此邮件。"
+                else:
+                    message = "邮件内容为空"
+            
             # 添加纯文本内容
             part1 = MIMEText(message, 'plain', 'utf-8')
             msg.attach(part1)
             
             # 如果提供了 HTML 内容，也添加进去
-            if html_message:
+            if html_message and len(html_message.strip()) > 0:
                 part2 = MIMEText(html_message, 'html', 'utf-8')
                 msg.attach(part2)
             
             if debug:
-                print(f"🔍 调试信息:")
-                print(f"   SMTP 服务器: {self.host}:{self.port}")
-                print(f"   使用 TLS: {self.use_tls}")
-                print(f"   发件人: {self.from_email}")
+                print(f"🔍 [邮件调试]")
                 print(f"   收件人: {recipient}")
+                print(f"   主题: {subject}")
+                print(f"   纯文本: {len(message)} 字符")
+                print(f"   HTML: {len(html_message) if html_message else 0} 字符")
             
             # 方案 1: 使用 SMTP_SSL (适用于 465 端口)
             if self.port == 465:

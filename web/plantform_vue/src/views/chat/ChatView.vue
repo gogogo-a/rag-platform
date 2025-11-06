@@ -91,7 +91,7 @@ const scrollToBottom = () => {
 }
 
 // 发送消息（SSE 流式）
-const handleSendMessage = async ({ content, showThinking, files = [] }) => {
+const handleSendMessage = async ({ content, showThinking, files = [], location = null }) => {
   if (!content.trim()) return
 
   // 添加用户消息
@@ -107,6 +107,12 @@ const handleSendMessage = async ({ content, showThinking, files = [] }) => {
     userMessage.file_name = firstFile.name
     userMessage.file_size = firstFile.size.toString()
     userMessage.file_type = firstFile.type
+  }
+  
+  // 如果有位置信息，添加到用户消息（用于显示）
+  if (location) {
+    userMessage.location = location
+    console.log('用户位置信息:', location)
   }
   
   chatStore.addMessage(userMessage)
@@ -135,6 +141,11 @@ const handleSendMessage = async ({ content, showThinking, files = [] }) => {
       formData.append('session_id', chatStore.currentSessionId)
     }
     formData.append('show_thinking', showThinking ? 'true' : 'false')
+    
+    // 如果有位置信息，添加到 FormData（作为 JSON 字符串）
+    if (location) {
+      formData.append('location', JSON.stringify(location))
+    }
     
     // 如果有文件，添加文件（只支持单个文件）
     if (files && files.length > 0) {

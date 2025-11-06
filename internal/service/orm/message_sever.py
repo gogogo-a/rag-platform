@@ -8,17 +8,15 @@ from datetime import datetime
 import uuid as uuid_module
 import time
 import os
-import base64
 from pathlib import Path as PathlibPath
 
 from internal.model.message import MessageModel
 from internal.model.session import SessionModel
 from internal.db.redis import redis_client
 from internal.db.milvus import milvus_client
-from internal.chat_service.chat_service import ChatService
 from internal.rag.rag_service import rag_service
 from pkg.model_list import DEEPSEEK_CHAT
-from pkg.agent_prompt.prompt_templates import AGENT_RAG_PROMPT
+from pkg.agent_prompt.prompt_templates import get_agent_prompt
 from pkg.agent_tools import get_available_tools
 from log import logger
 from pkg.constants.constants import MILVUS_COLLECTION_NAME, SUMMARY_MESSAGE_THRESHOLD, SUPPORTED_IMAGE_FORMATS
@@ -129,7 +127,8 @@ class MessageService:
         file_name: Optional[str] = None,
         file_size: Optional[str] = None,
         file_content: Optional[str] = None,
-        file_bytes: Optional[bytes] = None
+        file_bytes: Optional[bytes] = None,
+        location: Optional[str] = None
     ) -> MessageModel:
         """
         保存用户消息到数据库
@@ -137,6 +136,7 @@ class MessageService:
         Args:
             file_content: 文件解析后的文本内容（用于 AI 分析）
             file_bytes: 文件原始字节流（用于保存文件）
+            location: 用户位置信息（JSON 字符串，包含经纬度等）
         
         Returns:
             MessageModel: 保存的消息对象
@@ -169,6 +169,19 @@ class MessageService:
                     "file_name": file_name
                 }
                 logger.info(f"用户上传了文件（仅内容）: {file_name}, 内容长度: {len(file_content)}")
+            
+            # 🔥 如果有位置信息，添加到 extra_data
+            if location:
+                if extra_data is None:
+                    extra_data = {}
+                try:
+                    import json
+                    location_data = json.loads(location)
+                    extra_data["location"] = location_data
+                    logger.info(f"用户位置信息已保存: {location_data}")
+                except Exception as e:
+                    logger.warning(f"解析位置信息失败: {e}")
+                    extra_data["location"] = location  # 保存原始字符串
             
             message = MessageModel(
                 uuid=str(uuid_module.uuid4()),
@@ -485,14 +498,17 @@ class MessageService:
             available_tools = get_available_tools(is_admin=is_admin, user_permission=user_permission)
             tools_list = list(available_tools.values())
             
+            # 🎯 使用多工具综合 Agent Prompt
+            multi_tool_prompt = get_agent_prompt(use_multi_tool=True)
+            
             # 注意：auto_summary=False，因为我们在数据库层面实现了持久化总结（send_type=2）
             chat_service = ChatService(
                 session_id=session_id,
                 user_id=user_id,
                 model_name=DEEPSEEK_CHAT.name,
                 model_type=DEEPSEEK_CHAT.model_type,
-                system_prompt=AGENT_RAG_PROMPT,
-                tools=tools_list,  # 🔥 使用工具层提供的工具列表
+                system_prompt=multi_tool_prompt,  # 🔥 使用多工具 Agent prompt
+                tools=tools_list,  # 🔥 使用工具层提供的工具列表（7个工具）
                 auto_summary=False,  # 关闭底层自动总结，避免与数据库总结重复
                 max_history_count=10
             )
@@ -550,6 +566,12 @@ class MessageService:
             # 实时读取队列并yield事件
             current_line = ""
             in_answer = False
+            in_thought = False  # 新增：标记是否在 Thought 部分
+            in_action = False   # 新增：标记是否在 Action 部分
+            action_paren_depth = 0  # 跟踪Action中的括号深度
+            in_action_string = False  # 跟踪是否在Action的字符串内
+            action_string_char = None  # 字符串的引号类型
+            action_escaped = False  # 跟踪是否在转义字符后
             
             while not agent_task.done() or not event_queue.empty():
                 try:
@@ -570,34 +592,127 @@ class MessageService:
                     elif event_type == "llm_chunk":
                         current_line += content
                         
-                        # 检测事件类型
-                        if '\n' in current_line:
-                            lines = current_line.split('\n')
-                            for line in lines[:-1]:
-                                line = line.strip()
-                                if line.startswith('Thought:'):
+                        # 🔥 流式检测 Thought:
+                        if not in_thought and not in_answer and 'Thought:' in current_line:
+                            in_thought = True
+                            # 提取并立即输出 Thought: 后面的内容
+                            thought_part = current_line.split('Thought:', 1)[1]
+                            # 分割成已输出的部分和未输出的部分
+                            if '\n' in thought_part:
+                                # 有换行符，只输出第一行
+                                to_output = thought_part.split('\n')[0]
+                                remaining = '\n' + '\n'.join(thought_part.split('\n')[1:])
+                                current_line = remaining
+                            else:
+                                # 没有换行符，全部输出
+                                to_output = thought_part
+                                current_line = ""
+                            
+                            # 输出 Thought 内容（去掉换行符）
+                            if to_output and to_output not in ['\n', '\r\n']:
+                                yield {
+                                    "event": "thought",
+                                    "data": {"content": to_output}
+                                }
+                        
+                        # 如果在 Thought 部分，继续实时输出
+                        elif in_thought and not in_answer and not in_action:
+                            # 检查是否遇到 Action: 或 Answer:
+                            if 'Action:' in current_line or 'Answer:' in current_line:
+                                in_thought = False
+                                # 不清空 current_line，让后续逻辑处理
+                            else:
+                                # 实时输出当前 chunk（除了换行符）
+                                if content not in ['\n', '\r\n']:
                                     yield {
                                         "event": "thought",
-                                        "data": {"content": line.replace('Thought:', '').strip()}
+                                        "data": {"content": content}
                                     }
-                                elif line.startswith('Action:'):
+                        
+                        # 流式检测 Action:
+                        if not in_action and not in_answer and 'Action:' in current_line:
+                            in_action = True
+                            in_thought = False  # 退出 Thought 模式
+                            action_paren_depth = 0
+                            in_action_string = False
+                            action_string_char = None
+                            action_escaped = False
+                            
+                            # 提取并立即输出 Action: 后面的内容
+                            action_part = current_line.split('Action:', 1)[1]
+                            # 立即输出 "Action:" 之后的内容
+                            if action_part and action_part not in ['\n', '\r\n']:
+                                yield {
+                                    "event": "action",
+                                    "data": {"content": action_part}
+                                }
+                                # 更新括号深度
+                                for char in action_part:
+                                    if action_escaped:
+                                        action_escaped = False
+                                        continue
+                                    if char == '\\':
+                                        action_escaped = True
+                                        continue
+                                    if not in_action_string:
+                                        if char in ('"', "'"):
+                                            in_action_string = True
+                                            action_string_char = char
+                                        elif char == '(':
+                                            action_paren_depth += 1
+                                        elif char == ')':
+                                            action_paren_depth -= 1
+                                            if action_paren_depth == 0:
+                                                in_action = False
+                                                break
+                                    elif char == action_string_char:
+                                        in_action_string = False
+                                        action_string_char = None
+                            current_line = ""
+                        
+                        # 如果在 Action 部分，继续实时输出并跟踪括号
+                        elif in_action and not in_answer:
+                            # 检查是否遇到 Observation: 或其他关键字
+                            if 'Observation:' in content or 'Answer:' in content or 'Thought:' in content:
+                                in_action = False
+                                # 不清空 current_line，让后续逻辑处理
+                            else:
+                                # 实时输出当前 chunk
+                                if content not in ['\r']:
                                     yield {
                                         "event": "action",
-                                        "data": {"content": line.replace('Action:', '').strip()}
+                                        "data": {"content": content}
                                     }
-                                elif line.startswith('Answer:'):
-                                    in_answer = True
-                                    answer_start = line.replace('Answer:', '').strip()
-                                    if answer_start:
-                                        yield {
-                                            "event": "answer_chunk",
-                                            "data": {"content": answer_start}
-                                        }
-                            current_line = lines[-1]
+                                    
+                                    # 更新括号深度（用于判断Action是否结束）
+                                    for char in content:
+                                        if action_escaped:
+                                            action_escaped = False
+                                            continue
+                                        if char == '\\':
+                                            action_escaped = True
+                                            continue
+                                        if not in_action_string:
+                                            if char in ('"', "'"):
+                                                in_action_string = True
+                                                action_string_char = char
+                                            elif char == '(':
+                                                action_paren_depth += 1
+                                            elif char == ')':
+                                                action_paren_depth -= 1
+                                                if action_paren_depth == 0:
+                                                    # 括号匹配完成，Action结束
+                                                    in_action = False
+                                                    break
+                                        elif char == action_string_char:
+                                            in_action_string = False
+                                            action_string_char = None
                         
-                        # 🔥 实时检测 Answer: 开头（即使没有换行符）
+                        # 🔥 流式检测 Answer:
                         if not in_answer and 'Answer:' in current_line:
                             in_answer = True
+                            in_thought = False  # 退出 Thought 模式
+                            in_action = False   # 退出 Action 模式
                             # 提取 Answer: 后面的内容
                             answer_part = current_line.split('Answer:', 1)[1]
                             if answer_part.strip():
@@ -895,7 +1010,8 @@ AI回答：{ai_answer[:200]}...
         file_size: Optional[str] = None,
         file_content: Optional[str] = None,
         file_bytes: Optional[bytes] = None,
-        show_thinking: bool = False
+        show_thinking: bool = False,
+        location: Optional[str] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         发送消息（统一流式返回，支持文件内容）
@@ -905,6 +1021,7 @@ AI回答：{ai_answer[:200]}...
             file_content: 文档文件内容（已解析，用于保存到 extra_data）
             file_bytes: 图片文件字节流（未解析，将在此方法中流式处理）
             show_thinking: 是否显示思考过程（Thought/Action/Observation）
+            location: 用户位置信息（JSON 字符串，包含经纬度，用于 POI 搜索、天气查询、路线规划等）
         
         Yields:
             Dict: 包含事件类型和数据的字典
@@ -1011,7 +1128,7 @@ AI回答：{ai_answer[:200]}...
             # 3. 保存用户消息（包含文件内容，如果是图片则包含分析结果）
             user_msg = await self._save_user_message(
                 session_id, content, user_id, send_name, send_avatar,
-                file_type, file_name, file_size, file_content, file_bytes
+                file_type, file_name, file_size, file_content, file_bytes, location
             )
             
             yield {
@@ -1042,6 +1159,12 @@ AI回答：{ai_answer[:200]}...
             
             # 🔥 使用 enhanced_content（包含文件内容）或原始 content
             ai_input_content = enhanced_content
+            
+            # 🌐 如果有用户位置信息，添加到消息中（用于 POI 搜索、天气查询、路线规划等功能）
+            if location:
+                ai_input_content = f"{ai_input_content}\n\n[系统信息]\n用户位置: {location}"
+                logger.info(f"已添加用户位置到 AI 输入: {location}")
+            
             logger.info(f"发送给 AI 的内容长度: {len(ai_input_content)}, 原始问题长度: {len(content)}")
             
             async for event_dict in self._generate_ai_reply_stream(session_id, user_id, ai_input_content, history):

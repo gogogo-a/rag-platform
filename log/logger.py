@@ -106,7 +106,7 @@ class Logger:
             serialize=True,  # 自动 JSON 序列化（NDJSON 格式）
             backtrace=True,
             diagnose=True,
-            enqueue=True  # 异步写入，避免阻塞
+            enqueue=False  # 禁用异步写入，避免 macOS 信号量问题
         )
         
         # Error 及以上级别单独记录
@@ -122,7 +122,7 @@ class Logger:
             serialize=True,  # 自动 JSON 序列化（NDJSON 格式）
             backtrace=True,
             diagnose=True,
-            enqueue=True
+            enqueue=False  # 禁用异步写入，避免 macOS 信号量问题
         )
         
         self._initialized = True

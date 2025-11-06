@@ -131,3 +131,7 @@ SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'}
 # ==================== 百度千帆配置 ====================
 # 百度千帆 API Token（用于网页搜索等服务）
 BAIDU_TOKEN = os.getenv("BAIDU_TOKEN", "")
+
+# ==================== 高德地图配置 ====================
+# 高德地图 API Key（用于天气查询等服务）
+GAODE_API_KEY = os.getenv("GAODE_API_KEY", "")
