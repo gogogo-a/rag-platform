@@ -50,6 +50,8 @@
         placeholder="输入您的问题... (Shift + Enter 换行，Enter 发送，Ctrl+V 粘贴图片)"
         :disabled="isSending"
         @keydown.enter="handleKeyDown"
+        @compositionstart="handleCompositionStart"
+        @compositionend="handleCompositionEnd"
         @paste="handlePaste"
         class="message-textarea"
       />
@@ -101,6 +103,7 @@ const fileInputRef = ref(null)
 const textareaRef = ref(null)
 const isDragging = ref(false) // 拖拽状态
 const userLocation = ref(null) // 用户位置信息
+const isComposing = ref(false) // 输入法状态（是否正在输入中文）
 
 // 获取用户位置信息
 const getUserLocation = () => {
@@ -161,8 +164,23 @@ const handleFileChange = (event) => {
   event.target.value = ''
 }
 
+// 输入法开始（开始输入拼音）
+const handleCompositionStart = () => {
+  isComposing.value = true
+}
+
+// 输入法结束（确认输入中文）
+const handleCompositionEnd = () => {
+  isComposing.value = false
+}
+
 // 键盘事件处理
 const handleKeyDown = (event) => {
+  // 如果正在输入法中（输入拼音），不处理 Enter 键
+  if (event.isComposing || isComposing.value) {
+    return
+  }
+  
   // Shift + Enter: 换行
   if (event.shiftKey) {
     return
