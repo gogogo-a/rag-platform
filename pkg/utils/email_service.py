@@ -18,10 +18,6 @@ from pkg.constants.constants import (
     EMAIL_FROM,
     EMAIL_TIMEOUT,
     EMAIL_VERIFY_SSL,
-    REDIS_HOST,
-    REDIS_PORT,
-    REDIS_DB,
-    REDIS_PASSWORD
 )
 from internal.db.redis import redis_client  # 直接导入全局单例实例
 
