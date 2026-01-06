@@ -12,6 +12,7 @@ from internal.db.redis import redis_client  # 直接导入全局单例实例
 from internal.document_client.document_processor import document_processor
 from internal.http_sever.app import create_app
 from internal.monitor import start_resource_monitoring, stop_resource_monitoring
+from pkg.agent_tools_mcp import mcp_manager  # 🔥 导入 MCP 管理器
 from log import logger
 
 
@@ -56,6 +57,11 @@ async def lifespan(app: FastAPI):
         start_resource_monitoring(interval=60)  # 每 60 秒监控一次
         logger.info("✓ 资源监控已启动（CPU、内存、GPU、MongoDB、Milvus）")
         
+        # ==================== 启动 MCP 服务 ====================
+        logger.info("🔌 正在启动 MCP 工具服务...")
+        await mcp_manager.start_all()
+        logger.info("✓ MCP 工具服务已启动")
+        
         logger.info("=" * 80)
         logger.info("✅ 所有服务启动完成")
         logger.info("=" * 80)
@@ -99,6 +105,12 @@ async def lifespan(app: FastAPI):
             logger.info("✓ 资源监控已停止")
         except Exception as e:
             logger.error(f"停止资源监控失败: {e}")
+        
+        try:
+            await mcp_manager.stop_all()
+            logger.info("✓ MCP 工具服务已停止")
+        except Exception as e:
+            logger.error(f"停止 MCP 服务失败: {e}")
         
         logger.info("=" * 80)
         logger.info("👋 应用已关闭")

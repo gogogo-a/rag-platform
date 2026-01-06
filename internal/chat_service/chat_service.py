@@ -71,9 +71,7 @@ class ChatService:
         verbose: bool = True
     ) -> str:
         """
-        使用 Agent 进行对话（ReAct 框架）- 内部方法
-        
-        通过 chat(use_agent=True) 调用，不建议直接使用
+        使用 Agent 进行对话（ReAct 框架）- LangChain 版本
         
         Args:
             question: 用户问题
@@ -89,10 +87,10 @@ class ChatService:
         # 导入 ReActAgent（延迟导入避免循环依赖）
         from internal.agent.react_agent import ReActAgent
         
-        # 🔥 关键：记录历史长度，用于后续控制
-        history_start_length = len(self.llm_service.chat_history)
+        # 🔥 记录历史长度（LangChain 版本）
+        history_start_length = len(self.llm_service.chat_history.messages)
         
-        # 创建 Agent（Agent 不再处理历史记录，由 ChatService 统一管理）
+        # 创建 Agent
         agent = ReActAgent(
             llm_service=self.llm_service,
             tools=agent_tools,
@@ -100,29 +98,37 @@ class ChatService:
             verbose=verbose
         )
         
-        # 运行 Agent（会自动调用 llm_service，产生中间历史）
+        # 运行 Agent
         answer = agent.run(question, stream=verbose)
         
-        # 🔥 ChatService 统一处理历史记录
+        # 🔥 ChatService 统一处理历史记录（LangChain 版本）
         if save_only_answer:
             # ✅ 只保存问答（清除所有中间过程）
-            self.llm_service.chat_history = self.llm_service.chat_history[:history_start_length]
+            # 获取当前历史长度
+            current_length = len(self.llm_service.chat_history.messages)
+            
+            # 删除中间过程（从 history_start_length 到 current_length）
+            messages_to_keep = self.llm_service.chat_history.messages[:history_start_length]
+            
+            # 清空并重新添加
+            self.llm_service.chat_history.clear()
+            for msg in messages_to_keep:
+                self.llm_service.chat_history.add_message(msg)
             
             # 添加简洁的问答对
             self.add_to_history("user", question)
             self.add_to_history("assistant", answer)
             
             if verbose:
-                cleaned_count = len(self.llm_service.chat_history) - history_start_length - 2
+                cleaned_count = current_length - history_start_length
                 print(f"\n💾 ChatService：只保存问答（清除了 {cleaned_count} 条中间过程）")
         else:
             # ❌ 保留所有思考过程
-            # Agent 已经添加了所有中间历史到 llm_service
             self.add_to_history("user", question)
             self.add_to_history("assistant", answer)
             
             if verbose:
-                total_count = len(self.llm_service.chat_history) - history_start_length
+                total_count = len(self.llm_service.chat_history.messages) - history_start_length
                 print(f"\n💾 ChatService：保留完整思考过程（共 {total_count} 条）")
         
         return answer
@@ -289,8 +295,8 @@ class ChatService:
         """
         self.llm_service.add_to_history(role, content)
     
-    def get_history(self) -> List[Dict[str, str]]:
-        """获取历史记录"""
+    def get_history(self):
+        """获取历史记录 - LangChain 版本"""
         return self.llm_service.get_history()
     
     def clear_history(self):

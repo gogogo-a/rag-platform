@@ -1,11 +1,16 @@
 """
-LLM 服务层
-精简版 - 只保留核心 chat 功能
-支持提示词和工具配对
-支持异步对话历史总结
+LLM 服务层 - LangChain 版本
+使用 LangChain 标准组件：
+- ChatMessageHistory: 历史记录管理
+- SystemMessage/HumanMessage/AIMessage: 消息类型
+- 支持自动总结历史记录
 """
 from typing import Optional, List, Dict, Any, Callable
 import asyncio
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
+from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
 from pkg.model_list import ModelManager, LLAMA_3_2  # 默认模型配置
 from pkg.agent_prompt.prompt_templates import get_prompt, SUMMARY_PROMPT
 from pkg.agent_tools import (
@@ -67,8 +72,8 @@ class LLMService:
         else:
             self.system_prompt = get_prompt("default")
         
-        # 历史记录管理
-        self.chat_history: List[Dict[str, str]] = []
+        # 🔥 使用 LangChain 的历史记录管理
+        self.chat_history: BaseChatMessageHistory = InMemoryChatMessageHistory()
         self.auto_summary = auto_summary
         self.max_history_count = max_history_count
         self.max_history_tokens = max_history_tokens
@@ -85,7 +90,14 @@ class LLMService:
             self.llm = ModelManager.select_llm_model(self.model_name, self.model_type)
             print(f"✓ 模型已加载: {self.model_name} (type: {self.model_type})")
             if self.tools:
-                tool_names = [t.__name__ for t in self.tools]
+                # 兼容 LangChain Tool 对象和普通函数
+                from langchain_core.tools import Tool
+                tool_names = []
+                for t in self.tools:
+                    if isinstance(t, Tool):
+                        tool_names.append(t.name)
+                    else:
+                        tool_names.append(t.__name__)
                 print(f"✓ 已启用工具: {tool_names}")
         except Exception as e:
             print(f"✗ 模型初始化失败: {e}")
@@ -101,14 +113,11 @@ class LLMService:
         **kwargs
     ):
         """
-        对话方法
-        
-        🔥 优化：自动使用内部历史记录，无需手动获取
+        对话方法 - LangChain 版本
         
         Args:
             user_message: 用户消息（简化用法）
-            messages: 消息列表（高级用法，传入则忽略 user_message）
-                     - 如果不包含历史，会自动添加
+            messages: 消息列表（高级用法）
             context: 额外的上下文信息（如知识库检索结果）
             stream: 是否流式返回
             use_history: 是否自动使用内部历史记录（默认 True）
@@ -119,68 +128,52 @@ class LLMService:
             
         Returns (stream=False):
             完整回复
-            
-        示例:
-            # 简化用法（推荐）
-            llm.chat("你好")
-            
-            # 高级用法（完全控制）
-            llm.chat(messages=[{"role": "user", "content": "你好"}], use_history=False)
-        
-        Note:
-            工具调用由 Agent 层处理，不在此方法中控制
         """
-        # 🔥 关键优化：在 AI 回答前，如果需要总结，先执行总结
+        # 🔥 在 AI 回答前，如果需要总结，先执行总结
         if self._need_summary and not self._is_summarizing:
             print("\n⚡ 检测到需要总结历史记录，正在总结...")
             self.summarize_history()
             self._need_summary = False
         
-        # 构建完整的消息列表
-        full_messages = []
+        # 🔥 构建 LangChain 消息列表
+        langchain_messages: List[BaseMessage] = []
         
         # 添加系统提示词
         if self.system_prompt:
-            full_messages.append({
-                "role": "system",
-                "content": self.system_prompt
-            })
+            langchain_messages.append(SystemMessage(content=self.system_prompt))
         
-        # 添加上下文（如知识库内容）
+        # 添加上下文
         if context:
-            full_messages.append({
-                "role": "system",
-                "content": f"参考信息：\n{context}"
-            })
+            langchain_messages.append(SystemMessage(content=f"参考信息：\n{context}"))
         
-        # 🔥 自动添加历史记录
-        if use_history and self.chat_history:
-            full_messages.extend(self.chat_history)
+        # 🔥 自动添加历史记录（LangChain 格式）
+        if use_history:
+            langchain_messages.extend(self.chat_history.messages)
         
         # 添加用户消息
         if user_message and messages:
-            # ❌ 不允许同时提供两个参数，避免混淆
-            raise ValueError("不能同时提供 user_message 和 messages 参数，请选择其一")
+            raise ValueError("不能同时提供 user_message 和 messages 参数")
         elif user_message:
-            # 简化用法：直接传入字符串
-            full_messages.append({
-                "role": "user",
-                "content": user_message
-            })
+            langchain_messages.append(HumanMessage(content=user_message))
         elif messages:
-            # 高级用法：传入完整消息列表
-            full_messages.extend(messages)
+            # 转换为 LangChain 消息格式
+            for msg in messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role == "system":
+                    langchain_messages.append(SystemMessage(content=content))
+                elif role == "user":
+                    langchain_messages.append(HumanMessage(content=content))
+                elif role == "assistant":
+                    langchain_messages.append(AIMessage(content=content))
         else:
             raise ValueError("必须提供 user_message 或 messages 参数")
         
-        # 格式化为 prompt
-        prompt = self._format_messages(full_messages)
-        
-        # 生成回复
+        # 🔥 使用 LangChain 的 stream 方法
         if stream:
-            return self._stream_generate(prompt, **kwargs)
+            return self._stream_generate(langchain_messages, **kwargs)
         else:
-            return self._generate(prompt, **kwargs)
+            return self._generate(langchain_messages, **kwargs)
     
     def _normalize_chunk(self, chunk) -> str:
         """
@@ -199,38 +192,23 @@ class LLMService:
             # AIMessageChunk 对象，提取 content
             return chunk.content if hasattr(chunk, 'content') else str(chunk)
     
-    def _stream_generate(self, prompt: str, **kwargs):
-        """流式生成"""
+    def _stream_generate(self, messages: List[BaseMessage], **kwargs):
+        """流式生成 - LangChain 版本"""
         try:
-            for chunk in self.llm.stream(prompt):
+            # 🔥 直接传递 LangChain 消息列表
+            for chunk in self.llm.stream(messages):
                 yield self._normalize_chunk(chunk)
         except Exception as e:
             raise Exception(f"生成失败: {e}")
     
-    def _generate(self, prompt: str, **kwargs) -> str:
-        """非流式生成"""
+    def _generate(self, messages: List[BaseMessage], **kwargs) -> str:
+        """非流式生成 - LangChain 版本"""
         try:
-            chunks = [self._normalize_chunk(chunk) for chunk in self.llm.stream(prompt)]
-            return "".join(chunks)
+            # 🔥 使用 invoke 方法
+            response = self.llm.invoke(messages)
+            return self._normalize_chunk(response)
         except Exception as e:
             raise Exception(f"生成失败: {e}")
-    
-    def _format_messages(self, messages: List[Dict[str, str]]) -> str:
-        """格式化消息为 prompt"""
-        formatted = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            
-            if role == "system":
-                formatted.append(f"System: {content}")
-            elif role == "user":
-                formatted.append(f"User: {content}")
-            elif role == "assistant":
-                formatted.append(f"Assistant: {content}")
-        
-        formatted.append("Assistant:")
-        return "\n\n".join(formatted)
     
     def _estimate_tokens(self, text: str) -> int:
         """
@@ -249,10 +227,10 @@ class LLMService:
         return int(chinese_chars * 1.5 + other_chars / 4)
     
     def _calculate_history_tokens(self) -> int:
-        """计算历史记录的总 token 数"""
+        """计算历史记录的总 token 数 - LangChain 版本"""
         total_tokens = 0
-        for msg in self.chat_history:
-            content = msg.get("content", "")
+        for msg in self.chat_history.messages:
+            content = msg.content if hasattr(msg, 'content') else str(msg)
             total_tokens += self._estimate_tokens(content)
         return total_tokens
     
@@ -280,52 +258,48 @@ class LLMService:
     
     def _do_summarize(self) -> str:
         """
-        执行总结的核心逻辑（提取公共代码）
+        执行总结的核心逻辑 - LangChain 版本
         
         Returns:
             总结内容
         """
-        # 构建总结 prompt
+        # 🔥 构建总结 prompt（LangChain 格式）
         history_text = "\n\n".join([
-            f"{msg['role']}: {msg['content']}"
-            for msg in self.chat_history
+            f"{msg.type}: {msg.content}"
+            for msg in self.chat_history.messages
         ])
         
         summary_messages = [
-            {"role": "system", "content": SUMMARY_PROMPT},
-            {"role": "user", "content": f"请总结以下对话：\n\n{history_text}"}
+            SystemMessage(content=SUMMARY_PROMPT),
+            HumanMessage(content=f"请总结以下对话：\n\n{history_text}")
         ]
         
-        # 格式化并生成总结（使用 _normalize_chunk 统一处理）
-        prompt = self._format_messages(summary_messages)
+        # 生成总结
         summary_chunks = [
             self._normalize_chunk(chunk) 
-            for chunk in self.llm.stream(prompt)
+            for chunk in self.llm.stream(summary_messages)
         ]
         
         return "".join(summary_chunks)
     
     async def _summarize_history_async(self):
         """
-        异步总结历史记录
-        在后台运行，不阻塞当前对话
+        异步总结历史记录 - LangChain 版本
         """
-        if not self.chat_history or self._is_summarizing:
+        if not self.chat_history.messages or self._is_summarizing:
             return
         
         self._is_summarizing = True
         
         try:
-            old_count = len(self.chat_history)
+            old_count = len(self.chat_history.messages)
             summary = self._do_summarize()
             
-            # 替换历史记录为总结
-            self.chat_history = [
-                {
-                    "role": "assistant",
-                    "content": f"[历史对话总结] {summary}"
-                }
-            ]
+            # 🔥 清空并添加总结（LangChain 格式）
+            self.chat_history.clear()
+            self.chat_history.add_message(
+                AIMessage(content=f"[历史对话总结] {summary}")
+            )
             
             print(f"\n✓ 历史记录已总结（原 {old_count} 条 -> 1 条）")
             
@@ -336,25 +310,22 @@ class LLMService:
     
     def summarize_history(self):
         """
-        同步方式总结历史记录
-        适用于同步上下文（非异步环境）
+        同步方式总结历史记录 - LangChain 版本
         """
-        if not self.chat_history or self._is_summarizing:
+        if not self.chat_history.messages or self._is_summarizing:
             return
         
         self._is_summarizing = True
         
         try:
-            old_count = len(self.chat_history)
+            old_count = len(self.chat_history.messages)
             summary = self._do_summarize()
             
-            # 替换历史记录为总结
-            self.chat_history = [
-                {
-                    "role": "assistant",
-                    "content": f"[历史对话总结] {summary}"
-                }
-            ]
+            # 🔥 清空并添加总结（LangChain 格式）
+            self.chat_history.clear()
+            self.chat_history.add_message(
+                AIMessage(content=f"[历史对话总结] {summary}")
+            )
             
             print(f"\n✓ 历史记录已总结（原 {old_count} 条 -> 1 条）")
             
@@ -365,39 +336,38 @@ class LLMService:
     
     def add_to_history(self, role: str, content: str):
         """
-        添加消息到历史记录
-        
-        🔥 优化：只检查是否需要总结，不立即执行
-        总结会在下次 chat() 调用时（AI回答前）自动执行
+        添加消息到历史记录 - LangChain 版本
         
         Args:
             role: 角色 (user/assistant/system)
             content: 内容
         """
-        self.chat_history.append({
-            "role": role,
-            "content": content
-        })
+        # 🔥 使用 LangChain 的 add_message 方法
+        if role == "user":
+            self.chat_history.add_message(HumanMessage(content=content))
+        elif role == "assistant":
+            self.chat_history.add_message(AIMessage(content=content))
+        elif role == "system":
+            self.chat_history.add_message(SystemMessage(content=content))
         
-        # 检查是否需要总结（只标记，不执行）
-        # 只在首次超限时打印提示，避免重复
+        # 检查是否需要总结
         if self.auto_summary and self._should_summarize() and not self._need_summary:
             self._need_summary = True
-            print(f"📌 历史记录已达到限制（{len(self.chat_history)}条），将在下次对话前自动总结")
+            print(f"📌 历史记录已达到限制（{len(self.chat_history.messages)}条），将在下次对话前自动总结")
     
-    def get_history(self) -> List[Dict[str, str]]:
-        """获取当前历史记录"""
-        return self.chat_history.copy()
+    def get_history(self) -> List[BaseMessage]:
+        """获取当前历史记录 - LangChain 版本"""
+        return self.chat_history.messages.copy()
     
     def clear_history(self):
-        """清空历史记录"""
-        self.chat_history = []
+        """清空历史记录 - LangChain 版本"""
+        self.chat_history.clear()
         print("✓ 历史记录已清空")
     
     def get_history_stats(self) -> Dict[str, Any]:
-        """获取历史记录统计信息"""
+        """获取历史记录统计信息 - LangChain 版本"""
         return {
-            "count": len(self.chat_history),
+            "count": len(self.chat_history.messages),
             "total_tokens": self._calculate_history_tokens(),
             "max_count": self.max_history_count,
             "max_tokens": self.max_history_tokens,
@@ -405,7 +375,7 @@ class LLMService:
         }
     
     def get_info(self) -> Dict[str, Any]:
-        """获取服务信息"""
+        """获取服务信息 - LangChain 版本"""
         tool_info = get_tools_info(self.tools) if self.tools else []
         return {
             "model_name": self.model_name,
@@ -414,5 +384,5 @@ class LLMService:
             "tools": [t["name"] for t in tool_info],
             "tool_count": len(self.tools),
             "auto_summary": self.auto_summary,
-            "history_count": len(self.chat_history)
+            "history_count": len(self.chat_history.messages)
         }

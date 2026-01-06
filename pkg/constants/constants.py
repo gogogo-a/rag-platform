@@ -11,17 +11,20 @@ load_dotenv()
 # 需要在导入 transformers/sentence-transformers 之前设置
 # 如果模型已下载到本地缓存，设置为 1 可避免联网检查
 
-TRANSFORMERS_OFFLINE = os.getenv("TRANSFORMERS_OFFLINE", "0")
-HF_HUB_OFFLINE = os.getenv("HF_HUB_OFFLINE", "0")
+TRANSFORMERS_OFFLINE = os.getenv("TRANSFORMERS_OFFLINE", "1")
+HF_HUB_OFFLINE = os.getenv("HF_HUB_OFFLINE", "1")
 
 # 设置到环境变量中，影响后续导入的库
 if TRANSFORMERS_OFFLINE == "1":
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    print("✓ HuggingFace Transformers 离线模式已启用")
+    # 使用 stderr 避免污染 MCP 的 stdout
+    import sys
+    print("✓ HuggingFace Transformers 离线模式已启用", file=sys.stderr)
 
 if HF_HUB_OFFLINE == "1":
     os.environ["HF_HUB_OFFLINE"] = "1"
-    print("✓ HuggingFace Hub 离线模式已启用")
+    import sys
+    print("✓ HuggingFace Hub 离线模式已启用", file=sys.stderr)
 
 # HuggingFace 镜像配置（可选，用于国内访问）
 HF_ENDPOINT = os.getenv("HF_ENDPOINT", "")

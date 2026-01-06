@@ -1,31 +1,48 @@
 """
-RAG 服务
-专注于向量检索和上下文生成
+RAG 服务 - LangChain 版本
+使用 LangChain 的 VectorStoreRetriever 和 Milvus 集成
 
 特性：
-1. 向量检索
-2. Reranker 重排序（可选）
-3. 智能去重：自动过滤分数差异 <= 0.02 (相似度 >= 98%) 的重复文档
-4. 返回指定数量的最相关不重复文档
-
-注意：文档的加载、分割、向量化和存储请使用 document_processor.add_documents()
+1. LangChain Milvus 向量存储
+2. VectorStoreRetriever 检索器
+3. Reranker 重排序（可选）
+4. 智能去重
 """
 from typing import List, Dict, Any, Optional
 import logging
 import time
 
+from langchain_milvus import Milvus
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
+
 from internal.embedding.embedding_service import embedding_service
-from internal.db.milvus import milvus_client
 from internal.reranker.reranker_service import reranker_service
-from pkg.model_list import BGE_LARGE_ZH_V1_5, BGE_RERANKER_V2_M3  # 默认模型配置
-from pkg.constants.constants import MILVUS_COLLECTION_NAME
+from pkg.model_list import BGE_LARGE_ZH_V1_5, BGE_RERANKER_V2_M3
+from pkg.constants.constants import MILVUS_COLLECTION_NAME, MILVUS_HOST, MILVUS_PORT
 from internal.monitor import performance_monitor, record_performance
 
 logger = logging.getLogger(__name__)
 
 
+class LangChainEmbeddingWrapper(Embeddings):
+    """包装现有的 embedding_service 为 LangChain Embeddings"""
+    
+    def __init__(self, embedding_service):
+        self.embedding_service = embedding_service
+    
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """嵌入文档列表"""
+        return self.embedding_service.encode_documents(texts)
+    
+    def embed_query(self, text: str) -> List[float]:
+        """嵌入查询"""
+        return self.embedding_service.encode_query(text)
+
+
 class RAGService:
-    """RAG 服务类 - 专注于检索功能"""
+    """RAG 服务类 - LangChain 版本"""
     
     def __init__(
         self,
@@ -36,22 +53,20 @@ class RAGService:
         use_reranker: bool = True
     ):
         """
-        初始化 RAG 服务（仅检索功能）
+        初始化 RAG 服务 - LangChain 版本
         
         Args:
             collection_name: Milvus 集合名称
-            embedding_model: Embedding 模型名称，如果为 None 则使用 BGE_LARGE_ZH_V1_5
-            reranker_model: Reranker 模型名称，如果为 None 则使用 BGE_RERANKER_V2_M3
+            embedding_model: Embedding 模型名称
+            reranker_model: Reranker 模型名称
             top_k: 检索返回结果数量
             use_reranker: 是否使用 Reranker
         """
-        # 如果没有指定模型，使用默认配置
+        # 默认配置
         if embedding_model is None:
             embedding_model = BGE_LARGE_ZH_V1_5.name
         if reranker_model is None:
             reranker_model = BGE_RERANKER_V2_M3.name
-        
-        # 如果没有指定 collection_name，使用全局配置
         if collection_name is None:
             collection_name = MILVUS_COLLECTION_NAME
         
@@ -61,12 +76,32 @@ class RAGService:
         self.top_k = top_k
         self.use_reranker = use_reranker
         
-        # 初始化检索相关组件
-        self.embedder = embedding_service
-        self.vector_db = milvus_client
+        # 🔥 包装 embedding_service 为 LangChain Embeddings
+        self.embeddings = LangChainEmbeddingWrapper(embedding_service)
+        
+        # 🔥 初始化 LangChain Milvus 向量存储
+        # 注意：使用现有 collection 的字段名 "embedding"，而不是默认的 "vector"
+        self.vector_store = Milvus(
+            embedding_function=self.embeddings,
+            collection_name=collection_name,
+            connection_args={
+                "host": MILVUS_HOST,
+                "port": MILVUS_PORT
+            },
+            vector_field="embedding",  # 🔥 指定向量字段名
+            text_field="text",          # 🔥 指定文本字段名
+            auto_id=True                # 🔥 使用自动 ID
+        )
+        
+        # 🔥 创建 Retriever
+        self.retriever: BaseRetriever = self.vector_store.as_retriever(
+            search_kwargs={"k": top_k * 2}  # 多检索一些，用于去重和 rerank
+        )
+        
+        # Reranker（保持不变）
         self.reranker = reranker_service if use_reranker else None
         
-        logger.info(f"RAG 检索服务已初始化")
+        logger.info(f"RAG 检索服务已初始化（LangChain 版本）")
         logger.info(f"  集合名称: {collection_name}")
         logger.info(f"  Embedding 模型: {embedding_model}")
         logger.info(f"  Reranker 模型: {reranker_model if use_reranker else '未启用'}")
@@ -139,40 +174,10 @@ class RAGService:
         return deduplicated
     
     def initialize(self):
-        """初始化所有组件"""
-        try:
-            # 连接 Milvus
-            self.vector_db.connect()
-            
-            # 加载 Embedding 模型
-            self.embedder.load_model()
-            
-            # 加载 Reranker 模型（如果启用）
-            if self.use_reranker and self.reranker:
-                self.reranker.load_model()
-            
-            # 获取模型信息
-            model_info = self.embedder.get_model_info()
-            dimension = model_info["dimension"]
-            
-            # 创建或获取集合
-            collection = self.vector_db.get_collection(self.collection_name)
-            if not collection:
-                logger.info(f"创建新集合: {self.collection_name}")
-                self.vector_db.create_collection(
-                    collection_name=self.collection_name,
-                    dimension=dimension,
-                    description=f"RAG 文档集合 - {self.embedding_model}",
-                    metric_type="COSINE"
-                )
-            else:
-                logger.info(f"使用现有集合: {self.collection_name}")
-            
-            logger.info("✓ RAG 检索服务初始化完成")
-            
-        except Exception as e:
-            logger.error(f"✗ RAG 检索服务初始化失败: {e}")
-            raise
+        """初始化所有组件 - LangChain 版本（已在 __init__ 中完成）"""
+        # 🔥 LangChain 版本不需要手动初始化，在 __init__ 中已经完成
+        logger.info("RAG 服务已初始化（LangChain 版本）")
+        return
     
     @performance_monitor('milvus_search', operation_name='向量检索+Rerank', include_args=True, include_result=True)
     def search(
@@ -224,66 +229,53 @@ class RAGService:
             
             logger.info(f"搜索查询: {query[:50]}...")
             
-            # 1. 向量化查询（手动记录 embedding 性能）
+            # 1. 使用 LangChain Retriever 检索（内部会自动进行向量化）
             embedding_start = time.time()
-            query_embedding = self.embedder.encode_query(
-                query=query,
-                normalize=True
-            )
+            
+            # 🔥 使用 LangChain 的 retriever.get_relevant_documents
+            # 注意：这会自动调用 embeddings.embed_query 进行向量化
+            docs: List[Document] = self.retriever.get_relevant_documents(query)
+            
             embedding_duration = time.time() - embedding_start
             
-            # 记录 embedding 性能（自动计算 token 数量和 ms/10k tokens）
+            # 记录检索性能
             record_performance(
                 monitor_type='embedding',
-                operation='查询向量化',
+                operation='向量检索',
                 duration=embedding_duration,
                 query_length=len(query),
-                text=query  # 用于自动计算 token 数量
+                text=query
             )
             
-            # 2. 向量检索（如果使用 Reranker，检索更多候选）
-            retrieval_top_k = top_k * 3 if use_reranker else top_k
-            # 限制最大值，避免超过 Milvus 的 limit 限制
-            retrieval_top_k = min(retrieval_top_k, 512)
-            
-            results = self.vector_db.search_vectors(
-                collection_name=self.collection_name,
-                query_embeddings=[query_embedding.tolist()],
-                top_k=retrieval_top_k,
-                metric_type="COSINE",
-                output_fields=["text", "metadata"]
-            )
-            
-            # 3. 格式化结果
+            # 2. 格式化 LangChain Document 为统一格式
             formatted_results = []
-            if results and len(results) > 0:
-                for hit in results[0]:  # 只有一个查询
-                    result = {
-                        "id": hit["id"],
-                        "text": hit["text"],
-                        "metadata": hit["metadata"],
-                        "vector_score": hit["score"],
-                        "distance": hit["distance"]
-                    }
-                    
-                    # 应用元数据过滤
-                    if filter_metadata:
-                        match = all(
-                            hit["metadata"].get(k) == v
-                            for k, v in filter_metadata.items()
-                        )
-                        if not match:
-                            continue
-                    
-                    # 🔥 权限过滤：普通用户（user_permission=0）只能看 permission=0 的文档
-                    # 📌 兼容性处理：旧文档没有 permission 字段，默认视为 0（普通用户可见）
-                    doc_permission = hit["metadata"].get("permission", 0)  # 默认为 0
-                    if user_permission == 0 and doc_permission == 1:
-                        # 普通用户不能看管理员专属文档
-                        logger.debug(f"权限过滤：跳过管理员文档 {hit['id']}")
+            for i, doc in enumerate(docs):
+                result = {
+                    "id": doc.metadata.get("id", f"doc_{i}"),
+                    "text": doc.page_content,
+                    "metadata": doc.metadata,
+                    "vector_score": doc.metadata.get("score", 0.0),  # LangChain 可能在 metadata 中存储分数
+                    "distance": doc.metadata.get("distance", 0.0)
+                }
+                
+                # 应用元数据过滤
+                if filter_metadata:
+                    match = all(
+                        doc.metadata.get(k) == v
+                        for k, v in filter_metadata.items()
+                    )
+                    if not match:
                         continue
-                    
-                    formatted_results.append(result)
+                
+                # 🔥 权限过滤：普通用户（user_permission=0）只能看 permission=0 的文档
+                # 📌 兼容性处理：旧文档没有 permission 字段，默认视为 0（普通用户可见）
+                doc_permission = doc.metadata.get("permission", 0)  # 默认为 0
+                if user_permission == 0 and doc_permission == 1:
+                    # 普通用户不能看管理员专属文档
+                    logger.debug(f"权限过滤：跳过管理员文档 {result['id']}")
+                    continue
+                
+                formatted_results.append(result)
             
             logger.info(f"✓ 向量检索完成，返回 {len(formatted_results)} 条候选（已应用权限过滤，user_permission={user_permission}）")
             
@@ -390,25 +382,39 @@ class RAGService:
             return ""
     
     def get_collection_stats(self) -> Dict[str, Any]:
-        """获取集合统计信息"""
+        """获取集合统计信息 - LangChain 版本"""
         try:
-            stats = self.vector_db.get_collection_stats(self.collection_name)
-            model_info = self.embedder.get_model_info()
-            
+            # 🔥 LangChain 版本：直接从配置返回信息
             return {
-                **stats,
-                "embedding_model": model_info["model_name"],
-                "dimension": model_info["dimension"]
+                "collection_name": self.collection_name,
+                "embedding_model": self.embedding_model,
+                "reranker_model": self.reranker_model if self.use_reranker else None,
+                "top_k": self.top_k
             }
         except Exception as e:
             logger.error(f"✗ 获取统计信息失败: {e}")
             return {}
 
 
-# 创建默认 RAG 检索服务实例（使用全局配置和默认模型 BGE_LARGE_ZH_V1_5、BGE_RERANKER_V2_M3）
-rag_service = RAGService(
-    collection_name=None,  # 使用全局配置 MILVUS_COLLECTION_NAME
-    top_k=5,
-    use_reranker=True
-)
+# 🔥 懒加载：延迟创建实例，避免导入时就初始化模型
+_rag_service_instance = None
+
+def get_rag_service():
+    """获取 RAG 服务实例（懒加载）"""
+    global _rag_service_instance
+    if _rag_service_instance is None:
+        _rag_service_instance = RAGService(
+            collection_name=None,  # 使用全局配置 MILVUS_COLLECTION_NAME
+            top_k=5,
+            use_reranker=True
+        )
+    return _rag_service_instance
+
+# 为了向后兼容，保留 rag_service 变量（但使用属性访问）
+class _RAGServiceProxy:
+    """RAG 服务代理，实现懒加载"""
+    def __getattr__(self, name):
+        return getattr(get_rag_service(), name)
+
+rag_service = _RAGServiceProxy()
 

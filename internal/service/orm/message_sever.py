@@ -494,9 +494,11 @@ class MessageService:
             user_permission = 1 if is_admin else 0
             logger.info(f"用户权限: user_id={user_id}, is_admin={is_admin}, permission={user_permission}")
             
-            # 🔥 从工具层获取用户可用的工具（自动处理权限过滤和参数绑定）
-            available_tools = get_available_tools(is_admin=is_admin, user_permission=user_permission)
-            tools_list = list(available_tools.values())
+            # 🔥 从 MCP 管理器获取工具（使用 MCP 版本）
+            from pkg.agent_tools_mcp import mcp_manager
+            available_tools = mcp_manager.get_tool_map()  # 获取 MCP 工具字典
+            tools_list = mcp_manager.get_tools()  # 获取 MCP 工具列表
+            logger.info(f"🔧 加载 MCP 工具: {list(available_tools.keys())}")
             
             # 🎯 使用多工具综合 Agent Prompt
             multi_tool_prompt = get_agent_prompt(use_multi_tool=True)
@@ -556,22 +558,15 @@ class MessageService:
                 callback=callback
             )
             
-            # 在后台线程运行 Agent
-            async def run_agent():
-                return await asyncio.to_thread(lambda: agent.run(user_message, stream=True))
-            
-            # 启动 Agent 任务
-            agent_task = asyncio.create_task(run_agent())
+            # 直接运行异步 Agent
+            agent_task = asyncio.create_task(agent.run(user_message, stream=True))
             
             # 实时读取队列并yield事件
             current_line = ""
             in_answer = False
-            in_thought = False  # 新增：标记是否在 Thought 部分
-            in_action = False   # 新增：标记是否在 Action 部分
-            action_paren_depth = 0  # 跟踪Action中的括号深度
-            in_action_string = False  # 跟踪是否在Action的字符串内
-            action_string_char = None  # 字符串的引号类型
-            action_escaped = False  # 跟踪是否在转义字符后
+            in_thought = False  # 标记是否在 Thought 部分
+            in_action = False   # 标记是否在 Action 部分（用于跳过 LLM 输出中的 Action）
+            last_observation = None  # 记录最后一个 observation
             
             while not agent_task.done() or not event_queue.empty():
                 try:
@@ -582,8 +577,28 @@ class MessageService:
                         logger.debug(f"收到工具结果，已收集文档信息")
                         continue
                     
-                    # 🔥 处理 Observation 事件
+                    # 🔥 处理 final_answer 事件（Agent 的最终答案）
+                    elif event_type == "final_answer":
+                        logger.info(f"收到最终答案: {content[:100]}...")
+                        in_answer = True  # 标记已发送答案
+                        yield {
+                            "event": "answer_chunk",
+                            "data": {"content": content}
+                        }
+                    
+                    # 🔥 处理 action 事件（工具调用）
+                    elif event_type == "action":
+                        logger.info(f"工具调用: {content}")
+                        yield {
+                            "event": "action",
+                            "data": {"content": content}
+                        }
+                    
+                    # 🔥 处理 Observation 事件（工具返回结果）
                     elif event_type == "observation":
+                        # 暂存 observation，等待确认不是最终答案
+                        # 因为 LangChain 的 on_tool_end 会在最后被调用一次，此时 output 是最终答案
+                        last_observation = content
                         yield {
                             "event": "observation",
                             "data": {"content": content}
@@ -629,84 +644,23 @@ class MessageService:
                                         "data": {"content": content}
                                     }
                         
-                        # 流式检测 Action:
+                        # 🔥 禁用 LLM 输出中的 Action 解析
+                        # 因为我们已经通过 on_tool_start 回调获取了正确的 action
+                        # 流式检测 Action: 只用于标记状态，不输出内容
                         if not in_action and not in_answer and 'Action:' in current_line:
                             in_action = True
                             in_thought = False  # 退出 Thought 模式
-                            action_paren_depth = 0
-                            in_action_string = False
-                            action_string_char = None
-                            action_escaped = False
-                            
-                            # 提取并立即输出 Action: 后面的内容
-                            action_part = current_line.split('Action:', 1)[1]
-                            # 立即输出 "Action:" 之后的内容
-                            if action_part and action_part not in ['\n', '\r\n']:
-                                yield {
-                                    "event": "action",
-                                    "data": {"content": action_part}
-                                }
-                                # 更新括号深度
-                                for char in action_part:
-                                    if action_escaped:
-                                        action_escaped = False
-                                        continue
-                                    if char == '\\':
-                                        action_escaped = True
-                                        continue
-                                    if not in_action_string:
-                                        if char in ('"', "'"):
-                                            in_action_string = True
-                                            action_string_char = char
-                                        elif char == '(':
-                                            action_paren_depth += 1
-                                        elif char == ')':
-                                            action_paren_depth -= 1
-                                            if action_paren_depth == 0:
-                                                in_action = False
-                                                break
-                                    elif char == action_string_char:
-                                        in_action_string = False
-                                        action_string_char = None
-                            current_line = ""
+                            current_line = ""  # 清空，不输出
                         
-                        # 如果在 Action 部分，继续实时输出并跟踪括号
+                        # 如果在 Action 部分，跳过输出（因为已经通过回调发送）
                         elif in_action and not in_answer:
                             # 检查是否遇到 Observation: 或其他关键字
                             if 'Observation:' in content or 'Answer:' in content or 'Thought:' in content:
                                 in_action = False
                                 # 不清空 current_line，让后续逻辑处理
                             else:
-                                # 实时输出当前 chunk
-                                if content not in ['\r']:
-                                    yield {
-                                        "event": "action",
-                                        "data": {"content": content}
-                                    }
-                                    
-                                    # 更新括号深度（用于判断Action是否结束）
-                                    for char in content:
-                                        if action_escaped:
-                                            action_escaped = False
-                                            continue
-                                        if char == '\\':
-                                            action_escaped = True
-                                            continue
-                                        if not in_action_string:
-                                            if char in ('"', "'"):
-                                                in_action_string = True
-                                                action_string_char = char
-                                            elif char == '(':
-                                                action_paren_depth += 1
-                                            elif char == ')':
-                                                action_paren_depth -= 1
-                                                if action_paren_depth == 0:
-                                                    # 括号匹配完成，Action结束
-                                                    in_action = False
-                                                    break
-                                        elif char == action_string_char:
-                                            in_action_string = False
-                                            action_string_char = None
+                                # 跳过 Action 部分的输出
+                                pass
                         
                         # 🔥 流式检测 Answer:
                         if not in_answer and 'Answer:' in current_line:
@@ -743,7 +697,20 @@ class MessageService:
             
             # 等待 Agent 完成
             result = await agent_task
-            logger.info(f"Agent 完成: {len(result)} 字符")
+            logger.info(f"Agent 完成: {len(result)} 字符, in_answer={in_answer}")
+            logger.info(f"最后一个 observation: {last_observation[:100] if last_observation else 'None'}...")
+            
+            # 🔥 发送最终答案（result 就是最终答案）
+            # 注意：如果 last_observation 和 result 相同，说明最终答案已经作为 observation 发送了
+            if not in_answer and result:
+                if last_observation and last_observation == result:
+                    logger.info("⚠️ 最终答案已作为 observation 发送，跳过重复发送")
+                else:
+                    logger.info(f"发送最终答案: {result[:100]}...")
+                    yield {
+                        "event": "answer_chunk",
+                        "data": {"content": result}
+                    }
             
             # 🔥 发送检索到的文档信息
             logger.info(f"📚 准备发送文档列表，当前收集到 {len(retrieved_documents)} 个文档")

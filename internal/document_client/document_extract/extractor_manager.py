@@ -5,7 +5,7 @@
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 import re
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from .base_extractor import BaseExtractor
 from .extractors import (
     TextExtractor,

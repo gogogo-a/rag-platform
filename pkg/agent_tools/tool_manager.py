@@ -84,17 +84,27 @@ def get_tool_info(tool_func: Callable) -> Dict:
     获取工具信息
     
     Args:
-        tool_func: 工具函数
+        tool_func: 工具函数或 LangChain Tool 对象
         
     Returns:
         工具信息字典
     """
-    return {
-        "name": tool_func.__name__,
-        "description": getattr(tool_func, "description", tool_func.__doc__ or "无描述"),
-        "prompt_template": getattr(tool_func, "prompt_template", "default"),
-        "is_admin": getattr(tool_func, "is_admin", False)
-    }
+    # 兼容 LangChain Tool 对象
+    from langchain_core.tools import Tool
+    if isinstance(tool_func, Tool):
+        return {
+            "name": tool_func.name,
+            "description": tool_func.description or "无描述",
+            "prompt_template": "default",
+            "is_admin": False
+        }
+    else:
+        return {
+            "name": tool_func.__name__,
+            "description": getattr(tool_func, "description", tool_func.__doc__ or "无描述"),
+            "prompt_template": getattr(tool_func, "prompt_template", "default"),
+            "is_admin": getattr(tool_func, "is_admin", False)
+        }
 
 
 def get_tools_info(tools: List[Callable]) -> List[Dict]:
@@ -120,7 +130,7 @@ def get_prompt_for_tools(tools: List[Callable]) -> str:
     根据工具列表获取合适的提示词模板
     
     Args:
-        tools: 工具函数列表
+        tools: 工具函数列表或 LangChain Tool 对象列表
         
     Returns:
         提示词模板名称
@@ -130,7 +140,15 @@ def get_prompt_for_tools(tools: List[Callable]) -> str:
     
     # 返回第一个工具的提示词模板
     first_tool = tools[0]
-    return getattr(first_tool, "prompt_template", "default")
+    
+    # 兼容 LangChain Tool 对象和普通函数
+    from langchain_core.tools import Tool
+    if isinstance(first_tool, Tool):
+        # LangChain Tool 对象，使用默认模板
+        return "default"
+    else:
+        # 普通函数
+        return getattr(first_tool, "prompt_template", "default")
 
 
 # ==================== 工具获取（主入口）====================
