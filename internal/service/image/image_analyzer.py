@@ -1,17 +1,19 @@
 """
-图片处理服务
-支持 OCR 文字识别和多模态图片内容识别（LLaVA）
+图片分析器
+负责图片的 OCR 识别和多模态分析（LLaVA）
+从原有的 image_service.py 迁移
 """
+from typing import Dict, Any, AsyncGenerator
 from PIL import Image, ImageEnhance
 import io
 import base64
-from typing import Dict, Any, Optional
+
 from log import logger
 from pkg.constants.constants import OLLAMA_BASE_URL, ENABLE_VISION, VISION_MODEL
 
 
-class ImageService:
-    """图片处理服务（单例）"""
+class ImageAnalyzer:
+    """图片分析器（单例模式）"""
     
     _instance = None
     
@@ -21,18 +23,13 @@ class ImageService:
         return cls._instance
     
     def __init__(self):
-        """初始化图片处理服务"""
+        """初始化图片分析器"""
         if not hasattr(self, '_initialized'):
             self._initialized = True
             self._vision_enabled = ENABLE_VISION
             self._vision_model = VISION_MODEL
-            
-            if self._vision_enabled:
-                logger.info(f"✅ ImageService 初始化完成（使用 {self._vision_model} 进行图片识别）")
-            else:
-                logger.info("✅ ImageService 初始化完成（图片内容识别已禁用）")
     
-    def _ocr_image(self, image_bytes: bytes, filename: str) -> str:
+    def ocr_image(self, image_bytes: bytes, filename: str) -> str:
         """
         OCR 文字识别
         
@@ -81,7 +78,7 @@ class ImageService:
             logger.error(f"❌ OCR 识别失败: {filename}, error={e}")
             return f"（OCR 识别失败：{str(e)}）"
     
-    def _llava_analyze_stream(self, image_bytes: bytes, filename: str):
+    def llava_analyze_stream(self, image_bytes: bytes, filename: str):
         """
         使用 LLaVA (Ollama) 模型分析图片内容（流式）
         
@@ -114,8 +111,6 @@ class ImageService:
 Please provide a simple description in Chinese."""
             
             # 调用 Ollama LLaVA（流式）
-            logger.info(f"  🔄 调用 {self._vision_model} (流式)...")
-            
             full_description = ""
             for chunk in ollama.chat(
                 model=self._vision_model,
@@ -124,17 +119,14 @@ Please provide a simple description in Chinese."""
                     'content': prompt,
                     'images': [image_base64]
                 }],
-                stream=True  # 启用流式
+                stream=True
             ):
                 content = chunk['message']['content']
                 full_description += content
-                yield content  # 流式返回每个片段
+                yield content
             
             if not full_description.strip():
-                logger.warning(f"⚠️ LLaVA 返回空描述: {filename}")
                 yield self._simple_vision_analysis(image_bytes, filename)
-            else:
-                logger.info(f"✅ LLaVA 识别成功: {filename}, 描述长度={len(full_description)}")
             
         except ImportError:
             logger.error("❌ ollama 库未安装，请运行: pip install ollama")
@@ -155,7 +147,6 @@ Please provide a simple description in Chinese."""
             图片描述
         """
         try:
-            from PIL import Image
             import numpy as np
             
             # 加载图片
@@ -170,7 +161,7 @@ Please provide a simple description in Chinese."""
             aspect_ratio = width / height if height > 0 else 1
             
             # 分析主色调
-            img_array = np.array(image.resize((100, 100)))  # 缩小尺寸加速
+            img_array = np.array(image.resize((100, 100)))
             avg_color = img_array.mean(axis=(0, 1))
             r, g, b = avg_color
             
@@ -196,15 +187,11 @@ Please provide a simple description in Chinese."""
             else:
                 orientation = "方形构图"
             
-            # 构建描述
             description = f"""这是一张 {width}x{height} 像素的{orientation}图片。
 {color_desc}。
 
 💡 提示：当前使用的是基础图片分析，仅能识别图片的基本特征。
-如需更详细的物体识别、场景理解，建议启用 LLaVA 模型：
-1. 运行: ollama pull llava:7b
-2. 在 .env 中设置: ENABLE_VISION=true
-3. 重启服务"""
+如需更详细的物体识别、场景理解，建议启用 LLaVA 模型。"""
             
             return description
             
@@ -214,8 +201,126 @@ Please provide a simple description in Chinese."""
         except Exception as e:
             logger.error(f"❌ 简单视觉分析失败: {filename}, error={e}")
             return f"（图片分析失败：{str(e)}）"
+    
+    async def analyze_image_stream(
+        self,
+        image_bytes: bytes,
+        filename: str
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        流式分析图片内容（OCR + LLaVA）
+        
+        Args:
+            image_bytes: 图片字节流
+            filename: 文件名
+        
+        Yields:
+            Dict: 分析进度事件
+        """
+        try:
+            # 获取图片基本信息
+            image = Image.open(io.BytesIO(image_bytes))
+            image_info = {
+                "width": image.width,
+                "height": image.height,
+                "format": image.format or "Unknown"
+            }
+            
+            result = {
+                "ocr_text": "",
+                "vision_description": "",
+                "image_info": image_info,
+                "combined_content": ""
+            }
+            
+            # 1. OCR 文字识别
+            yield {
+                "event": "thought",
+                "data": {"content": "📝 正在识别图片中的文字（OCR）...\n"}
+            }
+            
+            try:
+                ocr_text = self.ocr_image(image_bytes, filename)
+                result["ocr_text"] = ocr_text
+                
+                if ocr_text and ocr_text != "（图片中未识别到文字内容）":
+                    yield {
+                        "event": "thought",
+                        "data": {"content": f"✅ OCR 识别完成，识别到文字：\n```\n{ocr_text}\n```\n\n"}
+                    }
+                else:
+                    yield {
+                        "event": "thought",
+                        "data": {"content": "⚠️ 图片中未识别到文字内容\n\n"}
+                    }
+            except Exception as e:
+                logger.error(f"OCR 识别失败: {e}")
+                yield {
+                    "event": "thought",
+                    "data": {"content": f"⚠️ OCR 识别失败: {str(e)}\n\n"}
+                }
+            
+            # 2. LLaVA 多模态图片内容识别（流式输出）
+            yield {
+                "event": "thought",
+                "data": {"content": "🤖 正在使用 LLaVA 分析图片内容（物体、场景识别）...\n\n"}
+            }
+            
+            try:
+                vision_desc_full = ""
+                
+                for chunk in self.llava_analyze_stream(image_bytes, filename):
+                    vision_desc_full += chunk
+                    yield {
+                        "event": "thought",
+                        "data": {"content": chunk}
+                    }
+                
+                result["vision_description"] = vision_desc_full
+                
+                yield {
+                    "event": "thought",
+                    "data": {"content": f"\n\n✅ 图片分析完成\n\n"}
+                }
+                
+            except Exception as e:
+                logger.error(f"LLaVA 分析失败: {e}")
+                yield {
+                    "event": "thought",
+                    "data": {"content": f"⚠️ 图片内容识别失败: {str(e)}\n\n"}
+                }
+            
+            # 3. 综合内容描述
+            combined_parts = []
+            
+            if result["vision_description"]:
+                combined_parts.append(f"【图片内容 - LLaVA 分析】\n{result['vision_description']}")
+            
+            if result["ocr_text"] and result["ocr_text"] != "（图片中未识别到文字内容）":
+                combined_parts.append(f"【图片中的文字 - OCR 识别】\n{result['ocr_text']}")
+            
+            if not combined_parts:
+                combined_parts.append("（图片分析未得到有效信息）")
+            
+            result["combined_content"] = "\n\n".join(combined_parts)
+            
+            # 返回完整结果
+            yield {
+                "event": "image_analysis_complete",
+                "data": result
+            }
+            
+        except Exception as e:
+            logger.error(f"图片分析失败: {filename}, error={e}", exc_info=True)
+            yield {
+                "event": "thought",
+                "data": {"content": f"❌ 图片分析失败：{str(e)}"}
+            }
+            yield {
+                "event": "image_analysis_complete",
+                "data": {"combined_content": f"（图片分析失败：{str(e)}）"}
+            }
 
 
 # 创建全局单例
-image_service = ImageService()
-
+image_analyzer = ImageAnalyzer()

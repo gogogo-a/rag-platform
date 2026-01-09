@@ -92,6 +92,7 @@ class MCPManager:
                                 # MCP 返回的是 CallToolResult，包含 content 列表
                                 text = result.content[0].text if result.content else ""
                                 print(f"[MCP] 提取文本长度: {len(text)}", file=sys.stderr)
+                                # 🔥 直接返回原始文本（可能是 JSON），让 react_agent 处理
                                 return text
                             return str(result)
                         except Exception as e:

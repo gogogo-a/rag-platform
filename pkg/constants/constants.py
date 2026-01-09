@@ -138,3 +138,26 @@ BAIDU_TOKEN = os.getenv("BAIDU_TOKEN", "")
 # ==================== 高德地图配置 ====================
 # 高德地图 API Key（用于天气查询等服务）
 GAODE_API_KEY = os.getenv("GAODE_API_KEY", "")
+
+# ==================== 问答缓存配置 ====================
+# 问答缓存 Milvus 集合名称（与文档集合分开）
+MILVUS_QA_COLLECTION_NAME = os.getenv("MILVUS_QA_COLLECTION_NAME", "qa_cache")
+
+# 相似问题检索阈值（0-1，越高越严格，0.95 表示 95% 相似度）
+QA_SIMILARITY_THRESHOLD = float(os.getenv("QA_SIMILARITY_THRESHOLD", "0.95"))
+
+# 是否启用相似问答缓存（启用后相同问题直接返回历史答案）
+ENABLE_QA_CACHE = os.getenv("ENABLE_QA_CACHE", "true").lower() == "true"
+
+# 问答缓存过期时间（秒，默认 7 天）
+QA_CACHE_TTL = int(os.getenv("QA_CACHE_TTL", str(7 * 24 * 3600)))
+
+# ==================== Agent 配置 ====================
+# Agent 类型：react（传统 ReAct）或 langgraph（LangGraph 状态图）
+AGENT_TYPE = os.getenv("AGENT_TYPE", "react")  # react | langgraph
+
+# Agent 最大迭代次数
+AGENT_MAX_ITERATIONS = int(os.getenv("AGENT_MAX_ITERATIONS", "5"))
+
+# Agent 错误恢复最大重试次数
+AGENT_MAX_RETRIES = int(os.getenv("AGENT_MAX_RETRIES", "2"))

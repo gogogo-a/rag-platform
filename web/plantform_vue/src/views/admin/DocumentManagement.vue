@@ -12,6 +12,9 @@
           @keyup.enter="handleSearch"
           style="width: 240px"
         />
+        <el-button type="success" :icon="View" @click="handleOpen3DView">
+          3D 视图
+        </el-button>
         <el-button type="primary" :icon="Upload" @click="showUploadDialog = true">
           上传文档
         </el-button>
@@ -176,7 +179,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getDocumentList, deleteDocument, uploadDocument } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Upload, RefreshRight, Document, User, Lock, InfoFilled } from '@element-plus/icons-vue'
+import { Search, Upload, RefreshRight, Document, User, Lock, InfoFilled, View } from '@element-plus/icons-vue'
 import CustomPagination from '@/components/public/CustomPagination.vue'
 
 const router = useRouter()
@@ -418,6 +421,11 @@ const handleRowClick = (row) => {
 // 查看详情
 const handleViewDetail = (document) => {
   router.push(`/admin/documents/${document.uuid}`)
+}
+
+// 打开 3D 视图
+const handleOpen3DView = () => {
+  router.push('/documents/3d')
 }
 
 // 删除文档

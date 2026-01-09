@@ -10,6 +10,8 @@ from api.v1.session_controller import router as session_router
 from api.v1.message_controller import router as message_router
 from api.v1.log_controller import router as log_router
 from api.v1.monitor_controller import router as monitor_router
+from api.v1.visualization_controller import router as visualization_router
+from api.v1.qa_cache_controller import router as qa_cache_router
 from log import logger
 
 
@@ -43,6 +45,12 @@ def setup_routes(app: FastAPI):
     
     # ==================== 监控查询路由 ====================
     app.include_router(monitor_router)
+    
+    # ==================== 3D 可视化路由 ====================
+    app.include_router(visualization_router)
+    
+    # ==================== QA 缓存管理路由 ====================
+    app.include_router(qa_cache_router)
     
     logger.info("✓ 路由注册完成")
     

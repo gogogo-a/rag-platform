@@ -29,6 +29,18 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
+    path: '/documents/3d',
+    name: 'Document3D',
+    component: () => import('@/views/admin/Document3DView.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/qa-cache/3d',
+    name: 'QACache3D',
+    component: () => import('@/views/admin/QACache3DView.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/documents/:id',
     name: 'DocumentDetail',
     component: () => import('@/views/admin/DocumentDetail.vue'),
@@ -69,6 +81,12 @@ const routes = [
         path: 'logs',
         name: 'AdminLogs',
         component: () => import('@/views/admin/LogManagement.vue'),
+        meta: { requiresAuth: true, requiresAdmin: true }
+      },
+      {
+        path: 'qa-cache',
+        name: 'AdminQACache',
+        component: () => import('@/views/admin/QACacheManagement.vue'),
         meta: { requiresAuth: true, requiresAdmin: true }
       }
     ]

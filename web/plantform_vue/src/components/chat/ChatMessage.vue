@@ -205,6 +205,30 @@
         >
           复制
         </el-button>
+        <!-- 点赞按钮 -->
+        <el-button
+          v-if="!isUser && thoughtChainId"
+          text
+          size="small"
+          :icon="likeActive ? StarFilled : Star"
+          :class="{ 'is-liked': likeActive }"
+          @click="handleLike"
+          :loading="feedbackLoading"
+        >
+          {{ likeCount > 0 ? likeCount : '' }} 赞
+        </el-button>
+        <!-- 踩按钮 -->
+        <el-button
+          v-if="!isUser && thoughtChainId"
+          text
+          size="small"
+          :icon="dislikeActive ? CircleCloseFilled : CircleClose"
+          :class="{ 'is-disliked': dislikeActive }"
+          @click="handleDislike"
+          :loading="feedbackLoading"
+        >
+          {{ dislikeCount > 0 ? dislikeCount : '' }} 踩
+        </el-button>
         <el-button
           v-if="!isUser"
           text
@@ -223,8 +247,9 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/store'
-import { User, Service, CopyDocument, RefreshRight, ArrowDown, MagicStick, Tools, View, Document, DocumentCopy, Right, Picture, Download } from '@element-plus/icons-vue'
+import { User, Service, CopyDocument, RefreshRight, ArrowDown, MagicStick, Tools, View, Document, DocumentCopy, Right, Picture, Download, Star, StarFilled, CircleClose, CircleCloseFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { submitFeedback } from '@/api/message'
 
 const props = defineProps({
   message: {
@@ -476,6 +501,91 @@ const handleCopy = async () => {
 // 重新生成
 const handleRegenerate = () => {
   emit('regenerate', props.message)
+}
+
+// ========== 反馈功能 ==========
+
+// 从 extra_data 获取 thought_chain_id
+const thoughtChainId = computed(() => {
+  return props.message.extra_data?.thought_chain_id || null
+})
+
+// 反馈状态
+const feedbackLoading = ref(false)
+const likeActive = ref(false)
+const dislikeActive = ref(false)
+const likeCount = ref(props.message.extra_data?.like_count || 0)
+const dislikeCount = ref(props.message.extra_data?.dislike_count || 0)
+
+// 点赞
+const handleLike = async () => {
+  if (feedbackLoading.value) return
+  
+  // 如果没有 thought_chain_id，提示用户
+  if (!thoughtChainId.value) {
+    ElMessage.info('请稍等，正在处理中...')
+    return
+  }
+  
+  feedbackLoading.value = true
+  try {
+    const result = await submitFeedback(thoughtChainId.value, 'like')
+    // 更新计数
+    likeCount.value = result.like_count ?? likeCount.value
+    dislikeCount.value = result.dislike_count ?? dislikeCount.value
+    // 更新状态
+    likeActive.value = true
+    dislikeActive.value = false
+    ElMessage.success('感谢您的反馈！')
+  } catch (error) {
+    console.error('点赞失败:', error)
+    // 如果是重复操作，显示提示
+    if (error.message?.includes('已经提交过')) {
+      ElMessage.info('您已经点过赞了')
+      likeActive.value = true
+    }
+  } finally {
+    feedbackLoading.value = false
+  }
+}
+
+// 踩
+const handleDislike = async () => {
+  if (feedbackLoading.value) return
+  
+  // 如果没有 thought_chain_id，提示用户
+  if (!thoughtChainId.value) {
+    ElMessage.info('请稍等，正在处理中...')
+    return
+  }
+  
+  feedbackLoading.value = true
+  try {
+    const result = await submitFeedback(thoughtChainId.value, 'dislike')
+    // 更新计数
+    likeCount.value = result.like_count ?? likeCount.value
+    dislikeCount.value = result.dislike_count ?? dislikeCount.value
+    // 更新状态
+    dislikeActive.value = true
+    likeActive.value = false
+    
+    // 根据缓存状态显示不同提示
+    if (result.cache_deleted) {
+      // 本次操作删除了缓存
+      ElMessage.warning('该回答已从缓存中移除')
+    } else {
+      ElMessage.success('感谢您的反馈！')
+    }
+  } catch (error) {
+    console.error('踩失败:', error)
+    // 如果是重复操作，显示提示
+    if (error.message?.includes('已经提交过')) {
+      ElMessage.info('您已经反馈过了')
+      dislikeActive.value = true
+    }
+  } finally {
+    feedbackLoading.value = false
+  }
 }
 </script>
 
@@ -1104,6 +1214,23 @@ const handleRegenerate = () => {
 
 .message-actions .el-button:hover {
   color: var(--primary-color);
+}
+
+/* 点赞/踩按钮样式 */
+.message-actions .el-button.is-liked {
+  color: #f59e0b;
+}
+
+.message-actions .el-button.is-liked:hover {
+  color: #fbbf24;
+}
+
+.message-actions .el-button.is-disliked {
+  color: #ef4444;
+}
+
+.message-actions .el-button.is-disliked:hover {
+  color: #f87171;
 }
 </style>
 

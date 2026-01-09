@@ -46,6 +46,10 @@
                     <el-icon><Edit /></el-icon>
                     <span>重命名</span>
                   </el-dropdown-item>
+                  <el-dropdown-item command="delete" divided>
+                    <el-icon><Delete /></el-icon>
+                    <span style="color: #f56c6c;">删除</span>
+                  </el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -83,11 +87,11 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useUserStore, useChatStore } from '@/store'
-import { Plus, ChatDotRound, More, Edit } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { Plus, ChatDotRound, More, Edit, Delete } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import LoadingSpinner from '@/components/public/LoadingSpinner.vue'
 import EmptyState from '@/components/public/EmptyState.vue'
-import { updateSession } from '@/api/session'
+import { updateSession, deleteSession } from '@/api/session'
 
 const userStore = useUserStore()
 const chatStore = useChatStore()
@@ -150,6 +154,43 @@ const handleSessionAction = (command, session) => {
       name: session.name || session.session_name || '新会话'
     }
     renameDialogVisible.value = true
+  } else if (command === 'delete') {
+    // 删除会话
+    handleDeleteSession(session)
+  }
+}
+
+// 删除会话
+const handleDeleteSession = async (session) => {
+  const sessionId = session.uuid || session.id
+  const sessionName = session.name || session.session_name || '新会话'
+  
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除会话「${sessionName}」吗？删除后该会话下的所有聊天记录将被清除，此操作不可恢复。`,
+      '删除会话',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger'
+      }
+    )
+    
+    // 调用删除 API
+    const res = await deleteSession(sessionId)
+    
+    // API 成功时直接返回（拦截器已处理错误情况）
+    ElMessage.success('删除成功')
+    
+    // 刷新页面
+    window.location.reload()
+  } catch (error) {
+    // 用户取消删除
+    if (error !== 'cancel') {
+      console.error('删除会话失败:', error)
+      ElMessage.error('删除失败，请重试')
+    }
   }
 }
 

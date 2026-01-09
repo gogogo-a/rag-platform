@@ -3,6 +3,7 @@
 """
 from typing import Tuple, Optional, Dict, Any, List
 from internal.model.session import SessionModel
+from internal.model.message import MessageModel
 from internal.dto.request import UpdateSessionRequest
 from log import logger
 from datetime import datetime
@@ -159,6 +160,49 @@ class SessionService:
         except Exception as e:
             logger.error(f"获取会话详情失败: {e}", exc_info=True)
             return f"获取失败: {str(e)}", -1, None
+    
+    async def delete_session(self, session_id: str, user_id: str) -> Tuple[str, int]:
+        """
+        删除会话及其所有消息
+        
+        Args:
+            session_id: 会话ID
+            user_id: 用户ID（用于权限验证）
+            
+        Returns:
+            (message, ret)
+        """
+        try:
+            logger.info(f"删除会话: session_id={session_id}, user_id={user_id}")
+            
+            # 查找会话
+            session = await SessionModel.find_one(SessionModel.uuid == session_id)
+            
+            if not session:
+                logger.warning(f"会话不存在: {session_id}")
+                return "会话不存在", -2
+            
+            # 验证权限：只能删除自己的会话
+            if session.user_id != user_id:
+                logger.warning(f"无权删除会话: session_id={session_id}, owner={session.user_id}, requester={user_id}")
+                return "无权删除此会话", -3
+            
+            # 1. 删除会话下的所有消息
+            delete_result = await MessageModel.find(
+                MessageModel.session_id == session_id
+            ).delete()
+            deleted_messages = delete_result.deleted_count if delete_result else 0
+            logger.info(f"删除会话消息: session_id={session_id}, 删除了 {deleted_messages} 条消息")
+            
+            # 2. 删除会话本身
+            await session.delete()
+            logger.info(f"会话删除成功: {session_id}")
+            
+            return "删除成功", 0
+            
+        except Exception as e:
+            logger.error(f"删除会话失败: {e}", exc_info=True)
+            return f"删除失败: {str(e)}", -1
 
 
 # 创建单例实例

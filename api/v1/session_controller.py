@@ -106,3 +106,29 @@ async def update_session(
     except Exception as e:
         logger.error(f"更新会话失败: {e}", exc_info=True)
         return json_response("系统错误", -1)
+
+
+@router.delete("/{session_id}", summary="删除会话")
+async def delete_session(
+    request: Request,
+    session_id: str = Path(..., description="会话UUID")
+):
+    """
+    删除会话及其所有消息
+    
+    - **session_id**: 会话UUID
+    
+    注意：删除会话会同时删除该会话下的所有聊天记录，此操作不可恢复。
+    """
+    try:
+        # 从token中获取用户ID
+        current_user = get_user_from_request(request)
+        user_id = current_user.get("user_id")
+        
+        logger.info(f"收到删除会话请求: session_id={session_id}, user_id={user_id}")
+        message, ret = await session_service.delete_session(session_id, user_id)
+        return json_response(message, ret)
+        
+    except Exception as e:
+        logger.error(f"删除会话失败: {e}", exc_info=True)
+        return json_response("系统错误", -1)

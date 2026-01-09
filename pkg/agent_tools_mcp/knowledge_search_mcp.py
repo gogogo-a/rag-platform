@@ -52,6 +52,8 @@ def knowledge_search(
         Dict: 包含搜索结果和上下文的字典
     """
     try:
+        import json
+        
         # 🔥 延迟导入并获取 rag_service（避免启动时加载模型）
         from internal.rag import rag_service as rag_module
         rag_service = rag_module.rag_service
@@ -71,21 +73,60 @@ def knowledge_search(
         print(f"[DEBUG] 搜索结果数量: {len(search_results) if search_results else 0}", file=sys.stderr)
         
         if not search_results:
-            return "知识库中未找到相关信息"
+            return json.dumps({
+                "success": True,
+                "context": "知识库中未找到相关信息",
+                "documents": []
+            }, ensure_ascii=False)
         
-        # 构建上下文
+        # 构建上下文和文档列表
         context_parts = []
+        documents = []
+        seen_doc_names = set()  # 用于按文档名去重
+        
         for i, result in enumerate(search_results, 1):
             text = result["text"]
-            source = result["metadata"].get("filename", "未知来源")
+            metadata = result.get("metadata", {})
+            
+            # 🔥 处理嵌套的 metadata 结构
+            # LangChain Milvus 返回的格式是 {'id': ..., 'metadata': {...}}
+            inner_metadata = metadata.get("metadata", metadata)
+            
+            # 使用正确的字段名：filename 和 document_uuid
+            source = inner_metadata.get("filename", "未知来源")
+            doc_uuid = inner_metadata.get("document_uuid", "")
+            
             part = f"[文档{i} - {source}]\n{text}\n"
             context_parts.append(part)
+            
+            # 收集文档信息（按 UUID 和文件名双重去重）
+            # 同一个文档的不同 chunk 有相同的 document_uuid 和 filename
+            if doc_uuid and doc_uuid not in seen_doc_names and source not in seen_doc_names:
+                documents.append({
+                    "uuid": doc_uuid,
+                    "name": source
+                })
+                seen_doc_names.add(doc_uuid)
+                seen_doc_names.add(source)
         
         context = "\n".join(context_parts)
-        return f"成功检索到 {len(search_results)} 个相关文档片段：\n\n{context}"
+        
+        # 返回 JSON 格式（包含文档信息）
+        result = {
+            "success": True,
+            "context": f"成功检索到 {len(search_results)} 个相关文档片段：\n\n{context}",
+            "documents": documents
+        }
+        
+        return json.dumps(result, ensure_ascii=False)
         
     except Exception as e:
-        return f"搜索失败: {str(e)}"
+        import json
+        return json.dumps({
+            "success": False,
+            "context": f"搜索失败: {str(e)}",
+            "documents": []
+        }, ensure_ascii=False)
 
 
 if __name__ == "__main__":

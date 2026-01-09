@@ -8,7 +8,6 @@ from fastapi import APIRouter, Query, Path, Request, Form, File, UploadFile
 from fastapi.responses import StreamingResponse
 from internal.dto.request import SendMessageRequest
 from internal.service.orm.message_sever import message_service
-from internal.service.image_service import image_service
 from api.v1.response_controller import json_response
 from pkg.middleware.auth import get_user_from_request
 from internal.document_client.document_extract import extract_document_content
@@ -33,6 +32,8 @@ async def send_message(
     send_avatar: Optional[str] = Form(None, description="发送者头像URL（可选）"),
     show_thinking: str = Form("false", description="是否显示思考过程"),
     location: Optional[str] = Form(None, description="用户位置信息（JSON字符串，包含经纬度等）"),
+    skip_cache: str = Form("false", description="是否跳过缓存（重新回答时使用）"),
+    regenerate_message_id: Optional[str] = Form(None, description="重新生成时的原消息ID（用于删除旧缓存）"),
     file: Optional[UploadFile] = File(None, description="上传的文件（可选，支持文档和图片：.pdf/.docx/.pptx/.xlsx/.csv/.html/.txt/.md/.rtf/.epub/.json/.xml/.jpg/.jpeg/.png/.webp/.gif/.bmp/.tiff）")
 ):
     """
@@ -47,6 +48,8 @@ async def send_message(
     - **send_avatar**: 发送者头像URL（可选）
     - **show_thinking**: 是否显示思考过程（默认 False）
     - **location**: 用户位置信息（可选，JSON字符串，包含经纬度等）
+    - **skip_cache**: 是否跳过缓存（重新回答时使用，默认 False）
+    - **regenerate_message_id**: 重新生成时的原消息ID（用于删除旧缓存）
     - **file**: 上传的文件（可选，支持文档和图片格式）
     
     **文件上传说明：**
@@ -198,7 +201,9 @@ async def send_message(
                     file_content=file_content,  # 🔥 文档内容（已解析）
                     file_bytes=file_bytes,  # 🔥 图片字节流（未解析，Service 层流式处理）
                     show_thinking=show_thinking,
-                    location=location  # 🔥 用户位置信息（GPS 经纬度，用于 POI 搜索、天气查询、路线规划等）
+                    location=location,  # 🔥 用户位置信息（GPS 经纬度，用于 POI 搜索、天气查询、路线规划等）
+                    skip_cache=skip_cache.lower() == "true",  # 🔥 是否跳过缓存
+                    regenerate_message_id=regenerate_message_id  # 🔥 重新生成时的原消息ID
                 ):
                     # 格式化为 SSE 格式
                     event_type = event.get("event", "message")
@@ -279,4 +284,104 @@ async def get_session_messages(
         
     except Exception as e:
         logger.error(f"获取会话消息失败: {e}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
+@router.post("/feedback", summary="提交消息反馈（点赞/踩）")
+async def submit_feedback(
+    request: Request,
+    thought_chain_id: str = Form(..., description="思维链ID"),
+    feedback_type: str = Form(..., description="反馈类型：like（点赞）或 dislike（踩）")
+):
+    """
+    提交消息反馈（点赞/踩）
+    
+    用于收集用户对 AI 回答的反馈，影响缓存策略：
+    - 点赞：增加该回答的权重，更容易被相似问题命中
+    - 踩：减少该回答的权重，累计 3 次踩后自动删除缓存
+    
+    **参数：**
+    - **thought_chain_id**: 思维链ID（从 AI 消息的 extra_data 中获取）
+    - **feedback_type**: 反馈类型，只能是 "like" 或 "dislike"
+    
+    **返回：**
+    - success: 是否成功
+    - like_count: 当前点赞数
+    - dislike_count: 当前踩数
+    - is_cached: 是否仍在缓存中
+    """
+    try:
+        # 验证反馈类型
+        if feedback_type not in ["like", "dislike"]:
+            return json_response("反馈类型无效，只能是 like 或 dislike", -1)
+        
+        # 从全局中间件中获取用户信息（验证登录状态）
+        try:
+            current_user = get_user_from_request(request)
+            user_id = current_user.get("user_id")
+        except Exception as auth_error:
+            logger.error(f"获取用户信息失败: {auth_error}")
+            return json_response("未授权", -1)
+        
+        # 调用缓存服务更新反馈
+        from internal.service.ai.similar_qa_cache import similar_qa_cache
+        
+        result = await similar_qa_cache.update_feedback(
+            thought_chain_id=thought_chain_id,
+            feedback_type=feedback_type,
+            user_id=user_id  # 传递用户ID防止重复操作
+        )
+        
+        if result.get("success"):
+            logger.info(f"反馈提交成功: thought_chain={thought_chain_id}, type={feedback_type}")
+            return json_response("反馈提交成功", 0, {
+                "like_count": result.get("like_count", 0),
+                "dislike_count": result.get("dislike_count", 0),
+                "is_cached": result.get("is_cached", False)
+            })
+        else:
+            return json_response(result.get("message", "反馈提交失败"), -1)
+        
+    except Exception as e:
+        logger.error(f"提交反馈失败: {e}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
+@router.delete("/cache/{thought_chain_id}", summary="删除指定的 QA 缓存")
+async def delete_qa_cache(
+    request: Request,
+    thought_chain_id: str = Path(..., description="思维链ID")
+):
+    """
+    删除指定的 QA 缓存
+    
+    用于手动删除不准确的缓存回答
+    
+    **参数：**
+    - **thought_chain_id**: 思维链ID
+    
+    **返回：**
+    - success: 是否删除成功
+    """
+    try:
+        # 从全局中间件中获取用户信息（验证登录状态）
+        try:
+            current_user = get_user_from_request(request)
+        except Exception as auth_error:
+            logger.error(f"获取用户信息失败: {auth_error}")
+            return json_response("未授权", -1)
+        
+        # 调用缓存服务删除缓存
+        from internal.service.ai.similar_qa_cache import similar_qa_cache
+        
+        success = await similar_qa_cache.delete_cache(thought_chain_id)
+        
+        if success:
+            logger.info(f"缓存删除成功: thought_chain={thought_chain_id}")
+            return json_response("缓存删除成功", 0)
+        else:
+            return json_response("缓存删除失败", -1)
+        
+    except Exception as e:
+        logger.error(f"删除缓存失败: {e}", exc_info=True)
         return json_response("系统错误", -1)

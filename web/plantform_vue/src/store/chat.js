@@ -69,7 +69,10 @@ export const useChatStore = defineStore('chat', {
         })
         
         // 处理消息，将 extra_data 中的数据提取到顶层
-        const messages = (data.messages || []).map(msg => {
+        const messages = (data.messages || [])
+          // 🔥 过滤掉系统总结消息（send_type === 2）
+          .filter(msg => msg.send_type !== 2)
+          .map(msg => {
           // 转换消息角色
           const role = msg.send_type === 0 ? 'user' : 'assistant'
           
@@ -137,6 +140,16 @@ export const useChatStore = defineStore('chat', {
         this.sessionList.unshift(session)
       }
       this.currentSessionId = sessionId
+    },
+
+    /**
+     * 从列表中移除会话
+     */
+    removeSession(sessionId) {
+      const index = this.sessionList.findIndex(s => (s.uuid || s.id) === sessionId)
+      if (index !== -1) {
+        this.sessionList.splice(index, 1)
+      }
     },
 
     /**

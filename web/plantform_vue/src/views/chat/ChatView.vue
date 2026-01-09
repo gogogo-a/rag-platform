@@ -18,7 +18,7 @@
         </div>
       </div>
 
-      <div class="chat-messages" ref="messagesContainer">
+      <div class="chat-messages" ref="messagesContainer" @scroll="handleScroll">
         <EmptyState
           v-if="!chatStore.loading && chatStore.currentMessages.length === 0"
           :icon="ChatDotRound"
@@ -54,7 +54,7 @@
 <script setup>
 import { ref, nextTick, onMounted, onActivated, onDeactivated, watch, defineOptions } from 'vue'
 import { useUserStore, useChatStore } from '@/store'
-import { sendMessageStream } from '@/api'
+import { sendMessageStream, sendMessageStreamWithOptions } from '@/api'
 import { ElMessage } from 'element-plus'
 import { ChatDotRound } from '@element-plus/icons-vue'
 
@@ -76,22 +76,59 @@ const messageInputRef = ref(null)
 const isStreaming = ref(false)
 const savedScrollPosition = ref(0) // 保存滚动位置
 
+// 🔥 滚动控制：流式输出时允许用户滑动一次后自由滚动
+const userScrollAttempts = ref(0) // 用户尝试滚动的次数
+const allowFreeScroll = ref(false) // 是否允许自由滚动
+
 // 判断是否为最后一条消息
 const isLastMessage = (index) => {
   return index === chatStore.currentMessages.length - 1
 }
 
-// 滚动到底部
-const scrollToBottom = () => {
+// 滚动到底部（带条件判断）
+const scrollToBottom = (force = false) => {
   nextTick(() => {
     if (messagesContainer.value) {
-      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+      // 如果强制滚动，或者不在流式输出中，或者未允许自由滚动，则滚动到底部
+      if (force || !isStreaming.value || !allowFreeScroll.value) {
+        messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+      }
     }
   })
 }
 
+// 处理用户滚动事件
+const handleScroll = (event) => {
+  if (!isStreaming.value) return
+  
+  const container = messagesContainer.value
+  if (!container) return
+  
+  // 检测是否向上滚动（用户想查看历史）
+  const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50
+  
+  if (!isAtBottom && !allowFreeScroll.value) {
+    // 用户尝试向上滚动
+    userScrollAttempts.value++
+    
+    if (userScrollAttempts.value >= 2) {
+      // 第二次尝试，允许自由滚动
+      allowFreeScroll.value = true
+    } else {
+      // 第一次尝试，阻止并滚动回底部
+      scrollToBottom(true)
+    }
+  }
+}
+
+// 重置滚动状态（流式输出结束时调用）
+const resetScrollState = () => {
+  userScrollAttempts.value = 0
+  allowFreeScroll.value = false
+}
+
 // 发送消息（SSE 流式）
-const handleSendMessage = async ({ content, showThinking, files = [], location = null }) => {
+const handleSendMessage = async ({ content, showThinking, files = [], location = null, skipCache = false, regenerateMessageId = null }) => {
   if (!content.trim()) return
 
   // 添加用户消息
@@ -116,7 +153,10 @@ const handleSendMessage = async ({ content, showThinking, files = [], location =
   }
   
   chatStore.addMessage(userMessage)
-  scrollToBottom()
+  
+  // 🔥 用户发送问题时，重置滚动状态并强制滚动到底部
+  resetScrollState()
+  scrollToBottom(true)
 
   // 创建 AI 消息占位符
   const aiMessage = {
@@ -155,7 +195,11 @@ const handleSendMessage = async ({ content, showThinking, files = [], location =
       }
     }
     
-    const response = await sendMessageStream(formData, true) // true 表示是 FormData
+    // 使用支持额外选项的 API（跳过缓存、重新生成）
+    const response = await sendMessageStreamWithOptions(formData, true, {
+      skipCache: skipCache,
+      regenerateMessageId: regenerateMessageId
+    })
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
@@ -278,14 +322,30 @@ const handleSSEEvent = async (eventType, data) => {
       break
       
     case 'ai_message_saved':
-      // AI 消息已保存
-      console.log('AI 消息已保存')
+      // AI 消息已保存，保存 thought_chain_id 用于反馈功能
+      console.log('AI 消息已保存:', data)
+      if (lastMessage && data) {
+        // 使用 Vue 响应式方式更新 extra_data
+        // 创建新的 extra_data 对象以触发响应式更新
+        const newExtraData = {
+          ...(lastMessage.extra_data || {}),
+          thought_chain_id: data.thought_chain_id || null,
+          like_count: data.like_count || 0,
+          dislike_count: data.dislike_count || 0
+        }
+        // 替换整个 extra_data 对象
+        lastMessage.extra_data = newExtraData
+        console.log('已更新 extra_data:', lastMessage.extra_data)
+      }
       break
       
     case 'done':
       // 流式输出完成
       console.log('流式输出完成')
       isStreaming.value = false
+      
+      // 🔥 重置滚动状态
+      resetScrollState()
       
       // 立即刷新会话列表以更新最后消息时间
       await chatStore.fetchSessionList(userStore.userId)
@@ -308,6 +368,8 @@ const handleSSEEvent = async (eventType, data) => {
       // 错误
       ElMessage.error(data.message || '发生错误')
       isStreaming.value = false
+      // 🔥 错误时也重置滚动状态
+      resetScrollState()
       break
   }
 }
@@ -319,13 +381,18 @@ const handleRegenerate = (message) => {
   if (messageIndex > 0) {
     const userMessage = chatStore.currentMessages[messageIndex - 1]
     if (userMessage.role === 'user') {
+      // 获取原消息的 thought_chain_id（用于删除旧缓存）
+      const regenerateMessageId = message.extra_data?.thought_chain_id || null
+      
       // 移除当前 AI 消息
       chatStore.currentMessages.splice(messageIndex, 1)
       
-      // 重新发送
+      // 重新发送，跳过缓存并传递原消息ID
       handleSendMessage({
         content: userMessage.content,
-        showThinking: chatStore.showThinking
+        showThinking: chatStore.showThinking,
+        skipCache: true,  // 跳过缓存
+        regenerateMessageId: regenerateMessageId  // 用于删除旧缓存
       })
     }
   }

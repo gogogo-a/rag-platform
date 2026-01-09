@@ -1,0 +1,30 @@
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "env": {},
+      "disabled": true,
+      "autoApprove": []
+    },
+     "chrome-devtools": { //自动打开浏览器执行操作的工具
+      "command": "npx",
+      "args": [
+        "-y", 
+        "chrome-devtools-mcp@latest",
+        "--headless=false",     // 建议改为 false，这样 AI 操作时你能看到浏览器在动，方便排错
+        "--isolated=true",      // 开启隔离模式，关闭后自动清理临时数据，更安全
+        "--viewport=1440x900",  // 固定窗口大小，防止 AI 因为页面缩放看不清按钮
+        "--channel=stable"      // 指定使用稳定版 Chrome
+      ]
+    },
+    "deepwiki": { //查看github代码工具
+      "url": "https://mcp.deepwiki.com/sse" 
+    },
+    "git-analytics": { //git分析的工具
+      "command": "node",
+      "args": ["/Users/haogeng/Desktop/genghao/mcp/GitAnalytics/dist/index.js"]
+    }
+  
+  }
+}

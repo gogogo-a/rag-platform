@@ -87,3 +87,27 @@ SUMMARY_MESSAGE_THRESHOLD=10
 # 注意：请申请 "Web服务" 类型的 Key，不是 "Web端(JS API)" 类型
 GAODE_API_KEY=
 
+# ==================== Agent 配置 ====================
+
+# Agent 类型
+# react: 传统 LangChain ReAct Agent（默认，稳定）
+# langgraph: LangGraph 状态图 Agent（支持错误恢复、条件分支）
+AGENT_TYPE=react
+
+# Agent 最大迭代次数（工具调用轮数）
+AGENT_MAX_ITERATIONS=5
+
+# Agent 错误恢复最大重试次数（仅 langgraph 模式有效）
+AGENT_MAX_RETRIES=2
+
+# ==================== 问答缓存配置 ====================
+
+# 是否启用相似问答缓存（启用后相同问题直接返回历史答案）
+ENABLE_QA_CACHE=true
+
+# 相似问题检索阈值（0-1，越高越严格，0.95 表示 95% 相似度）
+QA_SIMILARITY_THRESHOLD=0.95
+
+# 问答缓存 Milvus 集合名称
+MILVUS_QA_COLLECTION_NAME=qa_cache
+

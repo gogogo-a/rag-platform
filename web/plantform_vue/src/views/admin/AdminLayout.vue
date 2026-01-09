@@ -24,6 +24,11 @@
           <span>文档管理</span>
         </el-menu-item>
 
+        <el-menu-item index="/admin/qa-cache">
+          <el-icon><ChatDotRound /></el-icon>
+          <span>QA 缓存管理</span>
+        </el-menu-item>
+
         <el-menu-item index="/admin/monitor">
           <el-icon><Monitor /></el-icon>
           <span>系统监控</span>
@@ -48,7 +53,7 @@
 </template>
 
 <script setup>
-import { User, Document, Monitor, DocumentCopy } from '@element-plus/icons-vue'
+import { User, Document, Monitor, DocumentCopy, ChatDotRound } from '@element-plus/icons-vue'
 </script>
 
 <style scoped>

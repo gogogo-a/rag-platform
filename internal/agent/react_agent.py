@@ -3,15 +3,13 @@ ReAct Agent 实现 - LangChain 版本
 使用 LangChain 的 create_react_agent 和 AgentExecutor
 """
 from typing import Dict, List, Callable, Any, Optional
-import logging
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain_core.tools import Tool
 from langchain_core.prompts import PromptTemplate
 from langchain_core.callbacks import BaseCallbackHandler
 
-from internal.monitor import performance_monitor
-
-logger = logging.getLogger(__name__)
+from log import logger
+from internal.monitor import async_performance_monitor
 
 
 class StreamingCallbackHandler(BaseCallbackHandler):
@@ -37,9 +35,23 @@ class StreamingCallbackHandler(BaseCallbackHandler):
     def on_tool_end(self, output: str, **kwargs) -> None:
         """工具执行结束时调用"""
         if self.callback:
-            # 🔥 过滤掉错误处理的 observation
+            # 过滤掉错误处理的 observation
             if output and (output.startswith("请按照正确的格式") or "Invalid Format" in output):
                 return
+            
+            # 尝试从工具结果中提取文档信息
+            try:
+                import json
+                parsed = json.loads(output)
+                if isinstance(parsed, dict) and "documents" in parsed:
+                    documents = parsed.get("documents", [])
+                    if documents:
+                        self.callback("tool_result", {"documents": documents})
+                    # 使用 context 作为 observation
+                    output = parsed.get("context", output)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            
             self.callback("observation", output)
 
 
@@ -92,6 +104,31 @@ class ReActAgent:
             return_intermediate_steps=True
         )
     
+    def _get_history_text(self) -> str:
+        """
+        从 llm_service 获取历史记录文本
+        
+        Returns:
+            格式化的历史记录文本
+        """
+        history_messages = self.llm_service.get_history()
+        if not history_messages:
+            return ""
+        
+        history_parts = []
+        for msg in history_messages:
+            role = msg.type if hasattr(msg, 'type') else 'unknown'
+            content = msg.content if hasattr(msg, 'content') else str(msg)
+            
+            if role == 'human':
+                history_parts.append(f"用户: {content}")
+            elif role == 'ai':
+                history_parts.append(f"AI: {content}")
+            elif role == 'system':
+                history_parts.append(f"系统: {content}")
+        
+        return "\n".join(history_parts)
+    
     def _convert_tools(self, tools: Dict[str, Callable]) -> List[Tool]:
         """
         转换工具为 LangChain Tool 格式
@@ -121,7 +158,7 @@ class ReActAgent:
     
     def _create_agent(self):
         """创建 LangChain ReAct Agent"""
-        # 🔥 优化的 ReAct prompt 模板（中文友好）
+        # 🔥 优化的 ReAct prompt 模板（中文友好，支持历史记录）
         template = """尽你所能回答以下问题。你可以使用以下工具：
 
 {tools}
@@ -142,6 +179,9 @@ Final Answer: 对原始问题的最终答案
 2. Action 和 Action Input 必须在同一轮输出
 3. 看到 Observation 后，必须先输出 Thought 再决定下一步
 4. 确定答案后，直接输出 Final Answer
+5. 如果有历史对话，请结合历史上下文理解用户问题
+
+{chat_history}
 
 开始！
 
@@ -156,7 +196,7 @@ Thought:{agent_scratchpad}"""
             prompt=prompt
         )
     
-    @performance_monitor('agent_total', operation_name='Agent完整推理', include_args=True, include_result=False)
+    @async_performance_monitor('agent_total', operation_name='Agent完整推理', include_args=True, include_result=False)
     async def run(self, question: str, stream: bool = False) -> str:
         """
         运行 ReAct Agent - LangChain 版本（异步）
@@ -174,9 +214,17 @@ Thought:{agent_scratchpad}"""
             if self.callback:
                 callbacks.append(StreamingCallbackHandler(self.callback))
             
-            # 🔥 执行 Agent（异步）
+            # 🔥 获取历史记录
+            chat_history = self._get_history_text()
+            if chat_history:
+                chat_history = f"历史对话记录：\n{chat_history}\n"
+            
+            # 🔥 执行 Agent（异步），传入历史记录
             result = await self.agent_executor.ainvoke(
-                {"input": question},
+                {
+                    "input": question,
+                    "chat_history": chat_history
+                },
                 config={"callbacks": callbacks}
             )
             

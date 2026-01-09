@@ -36,3 +36,13 @@ export function updateSession(sessionId, data) {
   })
 }
 
+/**
+ * 删除会话
+ */
+export function deleteSession(sessionId) {
+  return request({
+    url: `/sessions/${sessionId}`,
+    method: 'delete'
+  })
+}
+

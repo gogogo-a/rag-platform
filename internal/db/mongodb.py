@@ -32,6 +32,7 @@ class MongoDB:
         from internal.model.message import MessageModel
         from internal.model.user_info import UserInfoModel
         from internal.model.session import SessionModel
+        from internal.model.thought_chain import ThoughtChainModel
         
         # MongoDB 连接 URL
         url = MONGODB_URL
@@ -58,12 +59,13 @@ class MongoDB:
                     DocumentModel,
                     MessageModel,
                     UserInfoModel,
-                    SessionModel
+                    SessionModel,
+                    ThoughtChainModel
                 ]
             )
             print(f"✓ Beanie ODM 初始化成功！")
             print(f"✓ 数据库: {database_name}")
-            print(f"✓ 集合: documents, message, user_info, session")
+            print(f"✓ 集合: documents, message, user_info, session, thought_chains")
             
             # 标记为已初始化
             self._initialized = True
