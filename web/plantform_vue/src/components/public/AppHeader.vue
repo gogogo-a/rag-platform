@@ -2,7 +2,7 @@
   <header class="app-header">
     <div class="header-left">
       <div class="logo">
-        <div class="logo-icon gradient-bg"></div>
+        <img src="/logo.png" alt="RAG Platform Logo" class="logo-icon" />
         <span class="logo-text gradient-text">RAG 智能问答平台</span>
       </div>
     </div>
@@ -238,6 +238,7 @@ const handleUpdateProfile = async () => {
   width: 36px;
   height: 36px;
   border-radius: 8px;
+  object-fit: contain;
   animation: pulse 2s ease-in-out infinite;
 }
 

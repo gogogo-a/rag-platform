@@ -1,7 +1,10 @@
 <template>
   <div class="register-form-container">
     <div class="form-header">
-      <h2 class="form-title gradient-text">创建账户</h2>
+      <div class="brand-logo">
+        <img src="/logo.png" alt="RAG Platform Logo" class="logo-image" />
+        <h2 class="form-title gradient-text">RAG 智能问答平台</h2>
+      </div>
       <p class="form-subtitle">开始您的智能问答之旅</p>
     </div>
 
@@ -221,10 +224,26 @@ const handleRegister = async () => {
   margin-bottom: 32px;
 }
 
+.brand-logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.logo-image {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  border-radius: 12px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
 .form-title {
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 700;
-  margin-bottom: 8px;
+  margin: 0;
 }
 
 .form-subtitle {
