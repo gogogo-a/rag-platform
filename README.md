@@ -44,7 +44,7 @@
 
 ### 1. 克隆项目
 ```bash
-git clone https://github.com/your-username/rag-platform.git
+git clone https://github.com/gogogo-a/workplantform.git
 cd rag-platform
 ```
 
