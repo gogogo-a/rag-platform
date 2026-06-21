@@ -243,7 +243,6 @@ const fetchDocumentList = async () => {
       keyword: searchKeyword.value || undefined
     })
     
-    console.log('文档列表数据:', data)  // 调试日志
     
     // 处理不同的返回格式
     if (Array.isArray(data)) {
@@ -356,7 +355,6 @@ const handleConfirmUpload = async () => {
     const fileCount = uploadForm.value.files.length
     const permissionText = uploadForm.value.permission === 1 ? '仅管理员可见' : '所有用户和管理员可见'
     
-    console.log(`批量上传 ${fileCount} 个文档，权限级别:`, uploadForm.value.permission)
     
     const response = await uploadDocument(formData)
     

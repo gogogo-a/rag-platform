@@ -10,6 +10,7 @@ from fastapi import UploadFile
 from pymilvus import Collection
 
 from internal.model.document import DocumentModel
+from internal.model.chunk import ChunkModel
 from internal.db.milvus import milvus_client
 from internal.document_client.document_processor import document_processor
 from internal.document_client.config_loader import config
@@ -318,7 +319,7 @@ class DocumentService:
         try:
             existing_collections = milvus_client.list_collections()
             if self.collection_name not in existing_collections:
-                return 0
+                return await ChunkModel.find(ChunkModel.document_uuid == document_uuid).count()
             
             collection = Collection(self.collection_name)
             collection.load()
@@ -331,11 +332,14 @@ class DocumentService:
                 limit=10000
             )
             
-            return len(results)
+            if results:
+                return len(results)
+
+            return await ChunkModel.find(ChunkModel.document_uuid == document_uuid).count()
             
         except Exception as e:
             logger.warning(f"从 Milvus 查询 chunk_count 失败: {e}")
-            return 0
+            return await ChunkModel.find(ChunkModel.document_uuid == document_uuid).count()
     
     async def update_document_status(
         self, 
@@ -510,4 +514,3 @@ class DocumentService:
 
 # 导出单例
 document_service = DocumentService()
-

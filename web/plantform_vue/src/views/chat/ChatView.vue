@@ -149,7 +149,6 @@ const handleSendMessage = async ({ content, showThinking, files = [], location =
   // 如果有位置信息，添加到用户消息（用于显示）
   if (location) {
     userMessage.location = location
-    console.log('用户位置信息:', location)
   }
   
   chatStore.addMessage(userMessage)
@@ -266,7 +265,6 @@ const handleSSEEvent = async (eventType, data) => {
       
     case 'user_message_saved':
       // 用户消息已保存
-      console.log('用户消息已保存')
       break
       
     case 'thought':
@@ -288,7 +286,6 @@ const handleSSEEvent = async (eventType, data) => {
         } else {
           lastMessage.action += data.content
         }
-        console.log('动作:', data.content)
       }
       break
       
@@ -300,7 +297,6 @@ const handleSSEEvent = async (eventType, data) => {
         } else {
           lastMessage.observation += data.content
         }
-        console.log('观察:', data.content)
       }
       break
       
@@ -316,14 +312,12 @@ const handleSSEEvent = async (eventType, data) => {
       // 引用文档列表
       if (lastMessage && data.documents) {
         lastMessage.documents = data.documents
-        console.log('引用文档:', data.documents)
         scrollToBottom()
       }
       break
       
     case 'ai_message_saved':
       // AI 消息已保存，保存 thought_chain_id 用于反馈功能
-      console.log('AI 消息已保存:', data)
       if (lastMessage && data) {
         // 使用 Vue 响应式方式更新 extra_data
         // 创建新的 extra_data 对象以触发响应式更新
@@ -335,13 +329,11 @@ const handleSSEEvent = async (eventType, data) => {
         }
         // 替换整个 extra_data 对象
         lastMessage.extra_data = newExtraData
-        console.log('已更新 extra_data:', lastMessage.extra_data)
       }
       break
       
     case 'done':
       // 流式输出完成
-      console.log('流式输出完成')
       isStreaming.value = false
       
       // 🔥 重置滚动状态
@@ -352,13 +344,10 @@ const handleSSEEvent = async (eventType, data) => {
       
       // 🔥 检测是否是第1轮对话，如果是则延迟刷新以获取自动生成的会话名称
       const currentMessageCount = chatStore.currentMessages.length
-      console.log('当前消息数量:', currentMessageCount)
       
       if (currentMessageCount === 2) {
-        console.log('检测到第1轮对话，2秒后刷新会话列表以获取自动生成的名称')
         // 延迟2秒后再次刷新，等待后端生成会话名称
         setTimeout(async () => {
-          console.log('刷新会话列表以更新自动生成的会话名称')
           await chatStore.fetchSessionList(userStore.userId)
         }, 2000)
       }
@@ -415,13 +404,11 @@ watch(
 )
 
 onMounted(async () => {
-  console.log('ChatView mounted, userId:', userStore.userId)
   
   // 确保有 userId 才获取会话列表
   if (userStore.userId) {
     // 进入页面时立即获取会话列表
     await chatStore.fetchSessionList(userStore.userId)
-    console.log('会话列表已加载，数量:', chatStore.sessionList.length)
   } else {
     console.warn('userId 不存在，无法获取会话列表')
   }
@@ -435,11 +422,9 @@ onMounted(async () => {
 
 // 组件激活时（从其他页面返回）
 onActivated(async () => {
-  console.log('ChatView activated: 恢复滚动位置', savedScrollPosition.value)
   
   // 如果会话列表为空且有 userId，重新获取会话列表
   if (chatStore.sessionList.length === 0 && userStore.userId) {
-    console.log('会话列表为空，重新获取...')
     await chatStore.fetchSessionList(userStore.userId)
   }
   
@@ -456,7 +441,6 @@ onDeactivated(() => {
   // 保存滚动位置
   if (messagesContainer.value) {
     savedScrollPosition.value = messagesContainer.value.scrollTop
-    console.log('ChatView deactivated: 保存滚动位置', savedScrollPosition.value)
   }
 })
 
@@ -464,9 +448,7 @@ onDeactivated(() => {
 watch(
   () => userStore.userId,
   async (newUserId, oldUserId) => {
-    console.log('userId 变化:', oldUserId, '->', newUserId)
     if (newUserId && !oldUserId && chatStore.sessionList.length === 0) {
-      console.log('检测到登录，获取会话列表...')
       await chatStore.fetchSessionList(newUserId)
     }
   }

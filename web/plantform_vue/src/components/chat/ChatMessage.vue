@@ -394,7 +394,6 @@ const handleImageClick = () => {
 const handleDownloadFile = async () => {
   // 防止重复下载
   if (isDownloading.value) {
-    console.log('正在下载中，请勿重复点击')
     return
   }
   

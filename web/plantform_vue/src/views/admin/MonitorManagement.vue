@@ -303,13 +303,11 @@ const avgResponseTime = computed(() => {
 
 const mongodbStatus = computed(() => {
   const status = latestResource.value?.mongodb?.status
-  console.log('MongoDB 状态:', status, latestResource.value?.mongodb)
   return status === 'healthy' ? '正常' : '异常'
 })
 
 const milvusStatus = computed(() => {
   const status = latestResource.value?.milvus?.status
-  console.log('Milvus 状态:', status, latestResource.value?.milvus)
   return status === 'healthy' ? '正常' : '异常'
 })
 
@@ -342,7 +340,6 @@ const handlePerformanceTypeChange = () => {
 const fetchAllData = async () => {
   // 检查用户权限：必须有 token 且 is_admin 为 1
   if (!userStore.token || userStore.userInfo.is_admin !== 1) {
-    console.log('无权限访问监控数据：token 或 admin 权限不足，取消请求')
     return
   }
   
@@ -350,7 +347,6 @@ const fetchAllData = async () => {
   try {
     // 获取资源监控数据
     const resourceRes = await getResourceMonitor(selectedDate.value, 50, 0)
-    console.log('资源监控响应:', resourceRes)
     
     // 按时间戳排序，确保从旧到新（左到右递增）
     const rawData = resourceRes.data || []
@@ -359,13 +355,11 @@ const fetchAllData = async () => {
       const timeB = new Date(b.timestamp).getTime()
       return timeA - timeB // 从旧到新
     })
-    console.log('资源监控数据（已排序）:', resourceData.value)
 
     // 获取各类性能监控数据
     for (const type of performanceTypes) {
       // 再次检查权限（防止异步期间退出登录）
       if (!userStore.token || userStore.userInfo.is_admin !== 1) {
-        console.log('权限已失效，中断数据获取')
         return
       }
       
@@ -378,14 +372,11 @@ const fetchAllData = async () => {
         const timeB = new Date(b.timestamp).getTime()
         return timeA - timeB // 从旧到新
       })
-      console.log(`${type.value} 性能数据（已排序）:`, performanceData[type.value])
     }
 
-    console.log('所有监控数据加载完成')
   } catch (error) {
     // 检查权限，避免在无权限时显示错误消息
     if (!userStore.token || userStore.userInfo.is_admin !== 1) {
-      console.log('无权限，忽略请求错误')
       return
     }
     console.error('获取监控数据失败:', error)
@@ -401,21 +392,17 @@ const fetchAllData = async () => {
 const fetchStatistics = async () => {
   // 检查用户权限：必须有 token 且 is_admin 为 1
   if (!userStore.token || userStore.userInfo.is_admin !== 1) {
-    console.log('无权限访问监控统计：token 或 admin 权限不足，取消请求')
     return
   }
   
   try {
     const res = await getMonitorStatistics()
-    console.log('监控统计信息响应:', res)
     
     // request.js 拦截器已经返回了 res.data，所以直接使用
     statistics.value = res
-    console.log('监控统计信息加载成功:', statistics.value)
   } catch (error) {
     // 检查权限，避免在无权限时显示错误消息
     if (!userStore.token || userStore.userInfo.is_admin !== 1) {
-      console.log('无权限，忽略统计信息请求错误')
       return
     }
     console.error('获取监控统计信息失败:', error)
@@ -426,7 +413,6 @@ const fetchStatistics = async () => {
 const startTimer = () => {
   // 检查权限
   if (!userStore.token || userStore.userInfo.is_admin !== 1) {
-    console.log('无权限，不启动定时器')
     return
   }
   
@@ -439,7 +425,6 @@ const startTimer = () => {
   refreshTimer = setInterval(() => {
     // 再次检查权限
     if (!userStore.token || userStore.userInfo.is_admin !== 1) {
-      console.log('权限已失效，停止定时器')
       stopTimer()
       return
     }
@@ -448,7 +433,6 @@ const startTimer = () => {
     fetchStatistics()
   }, 30000)
   
-  console.log('定时器已启动')
 }
 
 // 停止定时器
@@ -456,7 +440,6 @@ const stopTimer = () => {
   if (refreshTimer) {
     clearInterval(refreshTimer)
     refreshTimer = null
-    console.log('定时器已停止')
   }
 }
 

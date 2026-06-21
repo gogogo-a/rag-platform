@@ -15,7 +15,7 @@ timeout = 5
 # Kafka 模式配置（分布式消息队列）
 [kafka]
 # Kafka 服务器地址
-bootstrap_servers = ["localhost:9092"]
+bootstrap_servers = ["127.0.0.1:9092"]
 
 # 主题配置
 [kafka.topics]
@@ -73,4 +73,3 @@ collection_name = "documents"
 dimension = 1024
 # 批量插入大小
 batch_size = 100
-

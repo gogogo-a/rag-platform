@@ -119,7 +119,6 @@ const fetchUserList = async () => {
       keyword: searchKeyword.value || undefined
     })
     
-    console.log('用户列表数据:', data)  // 调试日志
     
     // 处理不同的返回格式
     if (Array.isArray(data)) {

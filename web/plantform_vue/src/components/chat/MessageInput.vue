@@ -124,7 +124,6 @@ const getUserLocation = () => {
           accuracy: position.coords.accuracy,
           timestamp: new Date(position.timestamp).toISOString()
         }
-        console.log('获取位置信息成功:', locationData)
         resolve(locationData)
       },
       (error) => {

@@ -191,7 +191,6 @@ export const useChatStore = defineStore('chat', {
       this.currentSessionId = ''
       this.currentMessages = []
       this.loading = false
-      console.log('聊天数据已清除')
     }
   }
 })

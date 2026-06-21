@@ -155,7 +155,6 @@ const profileRules = {
 }
 
 const handleCommand = (command) => {
-  console.log('handleCommand called with:', command)
   if (command === 'logout') {
     // 清除用户数据
     userStore.logout()
@@ -164,7 +163,6 @@ const handleCommand = (command) => {
     ElMessage.success('已退出登录')
     router.push('/login')
   } else if (command === 'profile') {
-    console.log('Opening profile dialog...')
     // 打开个人设置对话框
     profileForm.nickname = userStore.userInfo.nickname || ''
     profileForm.email = userStore.userInfo.email || ''
@@ -172,7 +170,6 @@ const handleCommand = (command) => {
     profileForm.gender = userStore.userInfo.gender || 0
     profileForm.birthday = userStore.userInfo.birthday || ''
     profileDialogVisible.value = true
-    console.log('profileDialogVisible set to:', profileDialogVisible.value)
   }
 }
 

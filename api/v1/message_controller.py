@@ -39,8 +39,6 @@ async def send_message(
     """
     发送消息并自动获取 AI 智能回复（统一流式返回，支持文件和图片上传）
     
-    ⚠️ 调试模式：临时打印所有接收到的参数
-    
     **参数：**
     - **content**: 消息内容（必填）
     - **session_id**: 会话ID（可选，不提供则创建新会话）
@@ -125,13 +123,6 @@ async def send_message(
     ```
     """
     try:
-        # 🔥 调试：打印所有接收到的参数
-        logger.info(f"📥 接收到的参数: content={content}, session_id={session_id}, show_thinking={show_thinking}, has_file={file is not None}, has_location={location is not None}")
-        if file:
-            logger.info(f"📎 文件信息: filename={file.filename}, content_type={file.content_type}")
-        if location:
-            logger.info(f"📍 位置信息: {location}")
-        
         # 验证必填参数
         if not content:
             logger.error("❌ content 参数缺失或为空")

@@ -346,7 +346,6 @@ const goBack = () => {
 // 下载文档
 const handleDownload = async () => {
   if (isDownloading.value) {
-    console.log('正在下载中，请勿重复点击')
     return
   }
 
@@ -365,7 +364,6 @@ const handleDownload = async () => {
       fullUrl = `${baseURL}${fullUrl}`
     }
 
-    console.log('开始下载文档:', fullUrl)
 
     // 使用 fetch 下载文件，通过 headers 携带 token
     const response = await fetch(fullUrl, {

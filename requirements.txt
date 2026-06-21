@@ -5,7 +5,7 @@ email-validator
 aiohttp
 pymongo
 motor
-beanie
+beanie>=1.30.0,<2.0.0
 redis
 pymilvus
 kafka-python
@@ -15,7 +15,7 @@ langchain-openai==0.2.14
 langchain-text-splitters==0.3.4
 langchain-milvus==0.1.6
 langchain-core>=0.3.28,<1.0.0  # 兼容 langchain-mcp-adapters
-langgraph>=0.2.0 <0.3.0 # LangGraph 状态图
+langgraph>=0.2.0,<0.3.0 # LangGraph 状态图
 ollama
 sentence-transformers
 transformers

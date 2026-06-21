@@ -273,12 +273,10 @@ const fetchLogs = async () => {
     const offset = (currentPage.value - 1) * pageSize.value
     const res = await getErrorLogs(selectedDate.value, pageSize.value, offset)
     
-    console.log('日志响应:', res)
     
     // request.js 拦截器已经返回了 res.data，所以直接使用
     logs.value = res.logs || []
     totalLogs.value = res.total || 0
-    console.log('日志数据加载成功:', logs.value.length, '条')
   } catch (error) {
     console.error('获取错误日志失败:', error)
     ElMessage.error(`获取错误日志失败: ${error.message}`)
@@ -291,10 +289,8 @@ const fetchStatistics = async () => {
   try {
     const res = await getErrorStatistics()
     
-    console.log('统计信息响应:', res)
     // request.js 拦截器已经返回了 res.data，所以直接使用
     statistics.value = res
-    console.log('统计信息加载成功:', statistics.value)
   } catch (error) {
     console.error('获取统计信息失败:', error)
   }

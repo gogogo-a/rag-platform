@@ -45,7 +45,6 @@ export const useUserStore = defineStore('user', {
       try {
         const data = await login(loginForm)
         
-        console.log('登录响应数据:', data)  // 调试日志
         
         // 保存 token 和用户信息
         this.token = data.token || ''
@@ -71,7 +70,6 @@ export const useUserStore = defineStore('user', {
       try {
         const data = await emailLogin(loginForm)
         
-        console.log('邮箱登录响应数据:', data)  // 调试日志
         
         // 保存 token 和用户信息
         this.token = data.token || ''

@@ -7,6 +7,7 @@ from datetime import datetime
 from pymilvus import Collection, utility
 
 from log import logger
+from internal.model.qa_cache import QACacheModel
 from internal.model.thought_chain import ThoughtChainModel
 from internal.db.milvus import milvus_client
 from pkg.constants.constants import MILVUS_QA_COLLECTION_NAME
@@ -42,7 +43,7 @@ class QACacheService:
         try:
             # 检查集合是否存在
             if not utility.has_collection(MILVUS_QA_COLLECTION_NAME):
-                return "QA 缓存集合不存在", 0, {"total": 0, "items": []}
+                return await self._get_cache_list_from_mongodb(page, page_size, keyword)
             
             collection = Collection(MILVUS_QA_COLLECTION_NAME)
             collection.load()
@@ -55,7 +56,7 @@ class QACacheService:
             )
             
             if not results:
-                return "暂无 QA 缓存数据", 0, {"total": 0, "items": []}
+                return await self._get_cache_list_from_mongodb(page, page_size, keyword)
             
             # 关键词过滤
             filtered = []
@@ -103,7 +104,47 @@ class QACacheService:
             
         except Exception as e:
             logger.error(f"获取 QA 缓存列表失败: {e}", exc_info=True)
-            return f"查询失败: {str(e)}", -1, None
+            return await self._get_cache_list_from_mongodb(page, page_size, keyword)
+
+    async def _get_cache_list_from_mongodb(
+        self,
+        page: int,
+        page_size: int,
+        keyword: Optional[str]
+    ) -> Tuple[str, int, Dict[str, Any]]:
+        query: Dict[str, Any] = {"is_active": True}
+        if keyword:
+            query["$or"] = [
+                {"question": {"$regex": keyword, "$options": "i"}},
+                {"answer": {"$regex": keyword, "$options": "i"}},
+            ]
+
+        total = await QACacheModel.find(query).count()
+        rows = (
+            await QACacheModel.find(query)
+            .sort("-update_at")
+            .skip((page - 1) * page_size)
+            .limit(page_size)
+            .to_list()
+        )
+
+        items = []
+        for row in rows:
+            thought_chain_id = row.metadata.get("thought_chain_id") if row.metadata else None
+            items.append({
+                "thought_chain_id": thought_chain_id or row.uuid,
+                "milvus_id": None,
+                "question": row.question,
+                "answer_preview": row.answer[:160],
+                "created_at": row.create_at.isoformat() if row.create_at else None
+            })
+
+        return "查询成功", 0, {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "items": items
+        }
     
     async def get_cache_detail(self, cache_id: str) -> Tuple[str, int, Optional[Dict[str, Any]]]:
         """

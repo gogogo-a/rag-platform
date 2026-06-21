@@ -33,6 +33,10 @@ class MongoDB:
         from internal.model.user_info import UserInfoModel
         from internal.model.session import SessionModel
         from internal.model.thought_chain import ThoughtChainModel
+        from internal.model.chunk import ChunkModel
+        from internal.model.qa_cache import QACacheModel
+        from internal.model.evaluation import EvaluationModel
+        from internal.model.benchmark import BenchmarkModel
         
         # MongoDB 连接 URL
         url = MONGODB_URL
@@ -60,12 +64,16 @@ class MongoDB:
                     MessageModel,
                     UserInfoModel,
                     SessionModel,
-                    ThoughtChainModel
+                    ThoughtChainModel,
+                    ChunkModel,
+                    QACacheModel,
+                    EvaluationModel,
+                    BenchmarkModel
                 ]
             )
             print(f"✓ Beanie ODM 初始化成功！")
             print(f"✓ 数据库: {database_name}")
-            print(f"✓ 集合: documents, message, user_info, session, thought_chains")
+            print(f"✓ 集合: documents, message, user_info, session, thought_chains, chunks, qa_caches, evaluations, benchmarks")
             
             # 标记为已初始化
             self._initialized = True
