@@ -195,6 +195,7 @@ class DocumentProcessor:
                     "chunks_count": len(chunks),
                     "vectors_count": len(embeddings),
                     "document_uuid": document_uuid,
+                    "full_content": full_content,
                     "embedding_time": round(embedding_duration, 2),  # 🔥 embedding时间（秒）
                     "processing_time": round(process_duration, 2),  # 🔥 总处理时间（秒）
                     "start_datetime": start_datetime.isoformat(),  # 🔥 开始时间
@@ -509,6 +510,7 @@ class DocumentProcessor:
                     document_uuid, 
                     status=2,
                     page=chunks_count,  # 将 chunks_count 存储到 page 字段
+                    content=result.get("full_content"),
                     extra_data_update=extra_data_update  # 🔥 更新extra_data
                 )
                 logger.info(f"✅ 文档处理完成，状态已更新: {document_uuid}")
@@ -615,4 +617,3 @@ if __name__ == "__main__":
     # 获取统计信息
     stats = message_client.get_stats()
     print(f"\n统计信息: {stats}")
-

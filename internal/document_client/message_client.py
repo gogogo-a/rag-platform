@@ -48,7 +48,7 @@ class MessageClient:
         """初始化 Kafka 客户端"""
         kafka_config = config.kafka_config
         
-        bootstrap_servers = kafka_config.get('bootstrap_servers', ['localhost:9092'])
+        bootstrap_servers = kafka_config.get('bootstrap_servers', ['8.140.245.242:9092'])
         producer_config = kafka_config.get('producer', {})
         consumer_config = kafka_config.get('consumer', {})
         
@@ -181,4 +181,3 @@ if __name__ == "__main__":
     # 测试统计信息
     stats = message_client.get_stats()
     print(f"\n统计信息: {stats}")
-
