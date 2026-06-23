@@ -49,8 +49,16 @@ class MessageClient:
         kafka_config = config.kafka_config
         
         bootstrap_servers = kafka_config.get('bootstrap_servers', ['8.140.245.242:9092'])
-        producer_config = kafka_config.get('producer', {})
-        consumer_config = kafka_config.get('consumer', {})
+        common_config = {
+            key: kafka_config[key]
+            for key in ("api_version", "request_timeout_ms")
+            if key in kafka_config
+        }
+        api_version = common_config.get("api_version")
+        if isinstance(api_version, list):
+            common_config["api_version"] = tuple(api_version)
+        producer_config = {**common_config, **kafka_config.get('producer', {})}
+        consumer_config = {**common_config, **kafka_config.get('consumer', {})}
         
         self.client = get_kafka_client(
             bootstrap_servers=bootstrap_servers,

@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from internal.document_client.message_client import MessageClient
 from internal.document_client.document_processor import DocumentProcessor
 from internal.service.orm.document_sever import DocumentService
 
@@ -209,6 +210,35 @@ class DocumentManagementPerformanceTest(unittest.TestCase):
         self.assertEqual(kwargs["content"], "完整正文")
         self.assertEqual(kwargs["page"], 3)
         self.assertEqual(kwargs["extra_data_update"]["chunks_count"], 3)
+
+    def test_kafka_common_config_is_applied_to_producer_and_consumer(self):
+        with patch("internal.document_client.message_client.config") as fake_config, \
+             patch("internal.document_client.message_client.get_kafka_client") as get_kafka_client:
+            fake_config.message_mode = "kafka"
+            fake_config.kafka_config = {
+                "bootstrap_servers": ["8.140.245.242:9092"],
+                "api_version": [4, 3],
+                "request_timeout_ms": 10000,
+                "max_block_ms": 10000,
+                "topics": {"document_embedding": "document_embedding"},
+                "producer": {"acks": "all", "max_block_ms": 10000},
+                "consumer": {"group_id": "brainwave_embedding_group"},
+            }
+
+            client = MessageClient()
+
+        get_kafka_client.assert_called_once()
+        _, kwargs = get_kafka_client.call_args
+        self.assertEqual(kwargs["bootstrap_servers"], ["8.140.245.242:9092"])
+        self.assertEqual(kwargs["producer_config"]["api_version"], (4, 3))
+        self.assertEqual(kwargs["consumer_config"]["api_version"], (4, 3))
+        self.assertEqual(kwargs["producer_config"]["request_timeout_ms"], 10000)
+        self.assertEqual(kwargs["consumer_config"]["request_timeout_ms"], 10000)
+        self.assertEqual(kwargs["producer_config"]["max_block_ms"], 10000)
+        self.assertNotIn("max_block_ms", kwargs["consumer_config"])
+        self.assertEqual(kwargs["producer_config"]["acks"], "all")
+        self.assertEqual(kwargs["consumer_config"]["group_id"], "brainwave_embedding_group")
+        self.assertIs(client.client, get_kafka_client.return_value)
 
 
 if __name__ == "__main__":

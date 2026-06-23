@@ -16,6 +16,9 @@ timeout = 5
 [kafka]
 # Kafka 服务器地址
 bootstrap_servers = ["8.140.245.242:9092"]
+# Kafka broker API 版本。固定版本可避免客户端启动时自动探测 metadata 偶发失败。
+api_version = [4, 3]
+request_timeout_ms = 10000
 
 # 主题配置
 [kafka.topics]
@@ -30,6 +33,7 @@ batch_processing = "batch_processing"
 [kafka.producer]
 # 消息确认级别 (0, 1, all)
 acks = "all"
+max_block_ms = 10000
 # 重试次数
 retries = 3
 # 批量大小（字节）
