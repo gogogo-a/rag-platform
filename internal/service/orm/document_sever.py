@@ -2,7 +2,6 @@
 文档服务业务逻辑层
 处理文档的上传、查询、删除等业务
 """
-import os
 import uuid as uuid_module
 from typing import Dict, Any, Optional
 from pathlib import Path
@@ -61,26 +60,13 @@ class DocumentService:
             file_size = len(file_content)
             logger.info(f"文件已保存: {file_path}, 大小: {file_size} bytes")
             
-            # 3. 解析文档内容
-            from internal.document_client.document_extract import extractor_manager
-            
-            try:
-                loaded_docs = extractor_manager.load_document(str(file_path))
-                parsed_content = "\n\n".join([doc["content"] for doc in loaded_docs])
-                page_count = len(loaded_docs)
-                logger.info(f"文档内容已解析: {file.filename}, 页数: {page_count}, 内容长度: {len(parsed_content)}")
-            except Exception as e:
-                logger.warning(f"文档内容解析失败: {e}, 将使用空内容")
-                parsed_content = ""
-                page_count = 0
-            
-            # 4. 保存文档信息到 MongoDB（初始状态：未处理）
+            # 3. 保存文档信息到 MongoDB（初始状态：未处理）
             upload_time = datetime.now()
             doc_model = DocumentModel(
                 uuid=file_uuid,
                 name=file.filename,
-                content=parsed_content,  # 存储解析后的文本内容
-                page=page_count,
+                content="",
+                page=0,
                 url=f"/uploads/{new_filename}",
                 size=file_size,
                 status=0,  # 0.未处理
@@ -96,7 +82,7 @@ class DocumentService:
             
             logger.info(f"文档已保存到 MongoDB: {file_uuid}, 状态: 未处理")
             
-            # 5. 提交到 Kafka 异步处理（Embedding）
+            # 4. 提交到 Kafka 异步处理（Embedding）
             task = {
                 "task_type": "file",
                 "file_path": str(file_path),
@@ -138,10 +124,10 @@ class DocumentService:
                 "uuid": file_uuid,
                 "name": file.filename,
                 "size": file_size,
-                "page": page_count,
+                "page": 0,
                 "url": f"/uploads/{new_filename}",
-                "content": parsed_content[:500] + "..." if len(parsed_content) > 500 else parsed_content,  # 返回前500字符
-                "content_length": len(parsed_content),
+                "content": "",
+                "content_length": 0,
                 "status": 1,
                 "status_text": "处理中",
                 "permission": permission,  # 🔥 返回权限信息
@@ -170,8 +156,8 @@ class DocumentService:
             if not doc:
                 return "文档不存在", -2, None
             
-            # 2. 从向量库获取 chunk_count
-            chunk_count = await self._get_chunk_count_from_vector_store(document_uuid)
+            # 2. 使用文档记录中已保存的分块数量，避免详情请求实时扫描远程向量库
+            chunk_count = self._get_saved_chunk_count(doc)
             
             # 3. 状态文本映射
             status_text_map = {
@@ -270,7 +256,7 @@ class DocumentService:
                 total = await DocumentModel.count()
                 docs = await DocumentModel.find_all().skip(skip).limit(page_size).to_list()
             
-            # 2. 为每个文档获取 chunk_count
+            # 2. 组装文档列表，优先使用已保存的分块数量
             status_text_map = {
                 0: "未处理",
                 1: "处理中",
@@ -280,7 +266,7 @@ class DocumentService:
             
             document_list = []
             for doc in docs:
-                chunk_count = await self._get_chunk_count_from_vector_store(doc.uuid)
+                chunk_count = self._get_saved_chunk_count(doc)
                 document_list.append({
                     "uuid": doc.uuid,
                     "name": doc.name,
@@ -303,6 +289,19 @@ class DocumentService:
         except Exception as e:
             logger.error(f"获取文档列表失败: {e}", exc_info=True)
             return f"查询失败: {str(e)}", -1, None
+
+    def _get_saved_chunk_count(self, doc) -> int:
+        """
+        从文档记录读取已保存的分块数量。
+        """
+        extra_data = getattr(doc, "extra_data", None) or {}
+        chunks_count = extra_data.get("chunks_count")
+        if isinstance(chunks_count, int) and chunks_count >= 0:
+            return chunks_count
+        page = getattr(doc, "page", 0) or 0
+        if isinstance(page, int) and page >= 0:
+            return page
+        return 0
     
     async def _get_chunk_count_from_vector_store(self, document_uuid: str) -> int:
         """
