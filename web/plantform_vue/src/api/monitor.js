@@ -2,7 +2,7 @@ import request from './request'
 
 /**
  * 获取性能监控数据
- * @param {string} monitorType - 监控类型（embedding, milvus_search, llm_think, llm_action, llm_answer, llm_total, agent_total）
+ * @param {string} monitorType - 监控类型（embedding, vector_search, llm_think, llm_action, llm_answer, llm_total, agent_total）
  * @param {string} date - 日期（格式：YYYY-MM-DD）
  * @param {number} limit - 每页数量
  * @param {number} offset - 偏移量

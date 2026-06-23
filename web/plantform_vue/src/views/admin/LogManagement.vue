@@ -278,7 +278,6 @@ const fetchLogs = async () => {
     logs.value = res.logs || []
     totalLogs.value = res.total || 0
   } catch (error) {
-    console.error('获取错误日志失败:', error)
     ElMessage.error(`获取错误日志失败: ${error.message}`)
   } finally {
     loading.value = false
@@ -292,7 +291,6 @@ const fetchStatistics = async () => {
     // request.js 拦截器已经返回了 res.data，所以直接使用
     statistics.value = res
   } catch (error) {
-    console.error('获取统计信息失败:', error)
   }
 }
 

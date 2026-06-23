@@ -7,14 +7,12 @@ import uuid as uuid_module
 from typing import Dict, Any, Optional
 from pathlib import Path
 from fastapi import UploadFile
-from pymilvus import Collection
-
 from internal.model.document import DocumentModel
 from internal.model.chunk import ChunkModel
-from internal.db.milvus import milvus_client
+from internal.db.qdrant import qdrant_client
 from internal.document_client.document_processor import document_processor
 from internal.document_client.config_loader import config
-from pkg.constants.constants import MILVUS_COLLECTION_NAME
+from pkg.constants.constants import QDRANT_COLLECTION_NAME
 from log import logger
 
 
@@ -24,7 +22,7 @@ class DocumentService:
     def __init__(self):
         self.upload_dir = Path("uploads")
         self.upload_dir.mkdir(exist_ok=True)
-        self.collection_name = MILVUS_COLLECTION_NAME
+        self.collection_name = QDRANT_COLLECTION_NAME
     
     async def upload_document(
         self,
@@ -172,8 +170,8 @@ class DocumentService:
             if not doc:
                 return "文档不存在", -2, None
             
-            # 2. 从 Milvus 获取 chunk_count
-            chunk_count = await self._get_chunk_count_from_milvus(document_uuid)
+            # 2. 从向量库获取 chunk_count
+            chunk_count = await self._get_chunk_count_from_vector_store(document_uuid)
             
             # 3. 状态文本映射
             status_text_map = {
@@ -207,7 +205,7 @@ class DocumentService:
     
     async def delete_document(self, document_uuid: str):
         """
-        删除文档（MongoDB + Milvus + 物理文件）
+        删除文档（MongoDB + 向量库 + 物理文件）
         
         Args:
             document_uuid: 文档UUID
@@ -226,9 +224,9 @@ class DocumentService:
             await doc.delete()
             logger.info(f"MongoDB 文档已删除: {document_uuid}")
             
-            # 3. 删除 Milvus 向量数据
-            deleted_count = self._delete_from_milvus(document_uuid)
-            logger.info(f"Milvus 向量已删除: {document_uuid}, 数量: {deleted_count}")
+            # 3. 删除向量数据
+            deleted_count = self._delete_from_vector_store(document_uuid)
+            logger.info(f"文档向量已删除: {document_uuid}, 数量: {deleted_count}")
             
             # 4. 删除物理文件
             file_path = Path(doc.url.lstrip('/'))
@@ -272,7 +270,7 @@ class DocumentService:
                 total = await DocumentModel.count()
                 docs = await DocumentModel.find_all().skip(skip).limit(page_size).to_list()
             
-            # 2. 为每个文档获取 chunk_count（从 Milvus）
+            # 2. 为每个文档获取 chunk_count
             status_text_map = {
                 0: "未处理",
                 1: "处理中",
@@ -282,7 +280,7 @@ class DocumentService:
             
             document_list = []
             for doc in docs:
-                chunk_count = await self._get_chunk_count_from_milvus(doc.uuid)
+                chunk_count = await self._get_chunk_count_from_vector_store(doc.uuid)
                 document_list.append({
                     "uuid": doc.uuid,
                     "name": doc.name,
@@ -306,9 +304,9 @@ class DocumentService:
             logger.error(f"获取文档列表失败: {e}", exc_info=True)
             return f"查询失败: {str(e)}", -1, None
     
-    async def _get_chunk_count_from_milvus(self, document_uuid: str) -> int:
+    async def _get_chunk_count_from_vector_store(self, document_uuid: str) -> int:
         """
-        从 Milvus 查询指定文档的 chunk 数量
+        从向量库查询指定文档的 chunk 数量
         
         Args:
             document_uuid: 文档UUID
@@ -317,28 +315,16 @@ class DocumentService:
             int: chunk 数量
         """
         try:
-            existing_collections = milvus_client.list_collections()
-            if self.collection_name not in existing_collections:
-                return await ChunkModel.find(ChunkModel.document_uuid == document_uuid).count()
-            
-            collection = Collection(self.collection_name)
-            collection.load()
-            
-            # 查询该文档的所有向量记录（document_uuid 在 metadata 中）
-            expr = f'metadata["document_uuid"] == "{document_uuid}"'
-            results = collection.query(
-                expr=expr,
-                output_fields=["id"],
-                limit=10000
+            count = qdrant_client.count_by_document_uuid(
+                document_uuid=document_uuid,
+                collection_name=self.collection_name
             )
-            
-            if results:
-                return len(results)
-
+            if count > 0:
+                return count
             return await ChunkModel.find(ChunkModel.document_uuid == document_uuid).count()
-            
+
         except Exception as e:
-            logger.warning(f"从 Milvus 查询 chunk_count 失败: {e}")
+            logger.warning(f"查询 chunk_count 失败: {e}")
             return await ChunkModel.find(ChunkModel.document_uuid == document_uuid).count()
     
     async def update_document_status(
@@ -472,9 +458,9 @@ class DocumentService:
             logger.error(f"更新文档状态失败（同步）: {e}", exc_info=True)
             return f"更新失败: {str(e)}", -1
     
-    def _delete_from_milvus(self, document_uuid: str) -> int:
+    def _delete_from_vector_store(self, document_uuid: str) -> int:
         """
-        从 Milvus 删除指定文档的所有向量
+        从向量库删除指定文档的所有向量
         
         Args:
             document_uuid: 文档UUID
@@ -483,32 +469,18 @@ class DocumentService:
             int: 删除的向量数量
         """
         try:
-            existing_collections = milvus_client.list_collections()
-            if self.collection_name not in existing_collections:
-                return 0
-            
-            collection = Collection(self.collection_name)
-            collection.load()
-            
-            # 先查询该文档有多少条记录（document_uuid 在 metadata 中）
-            expr = f'metadata["document_uuid"] == "{document_uuid}"'
-            count_results = collection.query(
-                expr=expr,
-                output_fields=["id"],
-                limit=10000
+            count = qdrant_client.count_by_document_uuid(
+                document_uuid=document_uuid,
+                collection_name=self.collection_name
             )
-            
-            count = len(count_results)
-            
-            # 删除
-            if count > 0:
-                collection.delete(expr)
-                collection.flush()
-            
+            qdrant_client.delete_by_document_uuid(
+                document_uuid=document_uuid,
+                collection_name=self.collection_name
+            )
             return count
-            
+
         except Exception as e:
-            logger.error(f"从 Milvus 删除向量失败: {e}", exc_info=True)
+            logger.error(f"删除文档向量失败: {e}", exc_info=True)
             return 0
 
 

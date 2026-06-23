@@ -70,9 +70,9 @@ class ConfigLoader:
         return self._config.get('embedding', {})
     
     @property
-    def milvus_config(self) -> Dict[str, Any]:
-        """获取 Milvus 配置"""
-        return self._config.get('milvus', {})
+    def vector_config(self) -> Dict[str, Any]:
+        """获取向量库配置"""
+        return self._config.get('vector', {})
     
     def get(self, key: str, default: Any = None) -> Any:
         """获取指定配置项"""
@@ -102,10 +102,9 @@ if __name__ == "__main__":
     print(f"Channel 配置: {config.channel_config}")
     print(f"Kafka 配置: {config.kafka_config}")
     print(f"Embedding 配置: {config.embedding_config}")
-    print(f"Milvus 配置: {config.milvus_config}")
+    print(f"向量库配置: {config.vector_config}")
     
     print(f"\n单项配置:")
     print(f"  kafka.topics.document_embedding: {config.get('kafka.topics.document_embedding')}")
     print(f"  channel.max_size: {config.get('channel.max_size')}")
     print(f"  embedding.batch_size: {config.get('embedding.batch_size')}")
-

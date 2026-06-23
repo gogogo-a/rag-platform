@@ -54,8 +54,8 @@ class ThoughtChainModel(Document):
     # 反馈统计
     like_count: int = Field(default=0, description="点赞数")
     dislike_count: int = Field(default=0, description="踩数")
-    is_cached: bool = Field(default=False, description="是否已缓存到 Milvus")
-    milvus_id: Optional[int] = Field(None, description="Milvus 中的 ID")
+    is_cached: bool = Field(default=False, description="是否已缓存")
+    vector_id: Optional[str] = Field(None, description="向量记录 ID")
     
     # 用户反馈记录（防止重复点赞/踩）
     # 格式: {user_id: "like" | "dislike"}

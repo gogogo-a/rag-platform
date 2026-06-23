@@ -65,8 +65,8 @@ timeout = 30
 # 重试次数
 max_retries = 3
 
-# ==================== Milvus 配置 ====================
-[milvus]
+# ==================== 向量库配置 ====================
+[vector]
 # Collection 名称
 collection_name = "documents"
 # 向量维度（根据实际 embedding 模型调整）

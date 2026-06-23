@@ -8,7 +8,7 @@ import uuid as uuid_module
 
 from log import logger
 from internal.model.thought_chain import ThoughtChainModel
-from internal.db.milvus import milvus_client
+from internal.db.qdrant import qa_qdrant_client
 from internal.embedding.embedding_service import embedding_service
 from pkg.constants.constants import ENABLE_QA_CACHE
 
@@ -25,7 +25,7 @@ class ThoughtChainStore:
     - 最终答案
     - 引用的文档
     
-    同时将问题的 embedding 存储到 Milvus，用于相似问题检索
+    同时将问题的 embedding 存储到 Qdrant，用于相似问题检索
     """
     
     _instance = None
@@ -104,7 +104,7 @@ class ThoughtChainStore:
         should_cache: Optional[bool] = None
     ) -> Optional[str]:
         """
-        保存思维链到 MongoDB 和 Milvus
+        保存思维链到 MongoDB 和 Qdrant
         
         Args:
             session_id: 会话ID
@@ -143,9 +143,9 @@ class ThoughtChainStore:
             
             await thought_chain_model.insert()
             
-            # 3. 根据评估结果决定是否保存到 Milvus QA 缓存
+            # 3. 根据评估结果决定是否保存到 QA 缓存
             if ENABLE_QA_CACHE and should_cache:
-                milvus_id = await self._save_to_milvus(
+                vector_id = await self._save_to_vector_store(
                     thought_chain_id=thought_chain_model.uuid,
                     question=question,
                     answer=answer,
@@ -154,11 +154,11 @@ class ThoughtChainStore:
                 )
                 
                 # 更新 MongoDB 中的缓存状态
-                if milvus_id:
+                if vector_id:
                     thought_chain_model.is_cached = True
-                    thought_chain_model.milvus_id = milvus_id
+                    thought_chain_model.vector_id = vector_id
                     await thought_chain_model.save()
-                    logger.debug(f"问答已缓存到 Milvus: {question[:30]}...")
+                    logger.debug(f"问答已缓存: {question[:30]}...")
             elif ENABLE_QA_CACHE and should_cache is False:
                 logger.debug(f"问答评估为不缓存: {question[:30]}...")
             
@@ -210,7 +210,7 @@ class ThoughtChainStore:
         except Exception as e:
             logger.error(f"更新消息 thought_chain_id 失败: {e}", exc_info=True)
     
-    async def _save_to_milvus(
+    async def _save_to_vector_store(
         self,
         thought_chain_id: str,
         question: str,
@@ -219,10 +219,10 @@ class ThoughtChainStore:
         user_id: Optional[str]
     ) -> Optional[int]:
         """
-        保存问题 embedding 到 Milvus（用于相似问题检索）
+        保存问题 embedding 到 Qdrant（用于相似问题检索）
         
         Returns:
-            Milvus 中的 ID，失败返回 None
+            向量 ID，失败返回 None
         """
         try:
             # 生成问题的 embedding
@@ -237,17 +237,15 @@ class ThoughtChainStore:
                 "created_at": datetime.now().isoformat()
             }
             
-            # 插入到 Milvus
-            milvus_id = milvus_client.insert_qa_cache(
-                question_embedding=question_embedding,
-                question_text=question,
+            # 插入到 Qdrant
+            return qa_qdrant_client.upsert_qa_cache(
+                embedding=question_embedding,
+                question=question,
                 metadata=metadata
             )
-            
-            return milvus_id
                 
         except Exception as e:
-            logger.error(f"保存问题 embedding 到 Milvus 失败: {e}")
+            logger.error(f"保存问题 embedding 失败: {e}")
             return None
     
     async def get_chain(self, chain_id: str) -> Optional[Dict[str, Any]]:

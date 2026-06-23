@@ -19,7 +19,7 @@ from .resource_monitor import (
     stop_resource_monitoring,
     record_llm_call,
     record_embedding_call,
-    record_milvus_search,
+    record_vector_search,
     record_mongodb_query
 )
 
@@ -38,6 +38,6 @@ __all__ = [
     'stop_resource_monitoring',
     'record_llm_call',
     'record_embedding_call',
-    'record_milvus_search',
+    'record_vector_search',
     'record_mongodb_query'
 ]

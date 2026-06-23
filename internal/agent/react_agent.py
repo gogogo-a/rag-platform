@@ -3,13 +3,37 @@ ReAct Agent 实现 - LangChain 版本
 使用 LangChain 的 create_react_agent 和 AgentExecutor
 """
 from typing import Dict, List, Callable, Any, Optional
+import re
+
 from langchain.agents import create_react_agent, AgentExecutor
+from langchain.agents.output_parsers import ReActSingleInputOutputParser
+from langchain_core.agents import AgentAction
 from langchain_core.tools import Tool
 from langchain_core.prompts import PromptTemplate
 from langchain_core.callbacks import BaseCallbackHandler
 
 from log import logger
 from internal.monitor import async_performance_monitor
+
+
+class TolerantReActOutputParser(ReActSingleInputOutputParser):
+    """Clean light formatting around tool names before execution."""
+
+    @staticmethod
+    def _clean_tool_name(tool_name: str) -> str:
+        cleaned = tool_name.strip()
+        cleaned = cleaned.strip("`*_ \n\t\r")
+        cleaned = re.sub(r"\s+", "", cleaned)
+        cleaned = cleaned.strip(":：")
+        return cleaned
+
+    def parse(self, text: str):
+        parsed = super().parse(text)
+        if isinstance(parsed, AgentAction):
+            cleaned_tool = self._clean_tool_name(parsed.tool)
+            if cleaned_tool != parsed.tool:
+                return AgentAction(cleaned_tool, parsed.tool_input, parsed.log)
+        return parsed
 
 
 class StreamingCallbackHandler(BaseCallbackHandler):
@@ -193,7 +217,8 @@ Thought:{agent_scratchpad}"""
         return create_react_agent(
             llm=self.llm,
             tools=self.langchain_tools,
-            prompt=prompt
+            prompt=prompt,
+            output_parser=TolerantReActOutputParser()
         )
     
     @async_performance_monitor('agent_total', operation_name='Agent完整推理', include_args=True, include_result=False)

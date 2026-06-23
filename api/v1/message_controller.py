@@ -175,7 +175,8 @@ async def send_message(
                 logger.error(f"文件处理失败: {e}", exc_info=True)
                 return json_response(f"文件处理失败: {str(e)}", -1)
         
-        logger.info(f"收到发送消息请求: user={user_id}, nickname={user_nickname}, session={session_id}, show_thinking={show_thinking}, has_file={file is not None}")
+        show_thinking_enabled = show_thinking.lower() == "true"
+        logger.info(f"收到发送消息请求: user={user_id}, nickname={user_nickname}, session={session_id}, show_thinking={show_thinking_enabled}, has_file={file is not None}")
         
         async def event_generator():
             """SSE 事件生成器（在 Controller 层格式化）"""
@@ -191,7 +192,7 @@ async def send_message(
                     file_size=file_size,
                     file_content=file_content,  # 🔥 文档内容（已解析）
                     file_bytes=file_bytes,  # 🔥 图片字节流（未解析，Service 层流式处理）
-                    show_thinking=show_thinking,
+                    show_thinking=show_thinking_enabled,
                     location=location,  # 🔥 用户位置信息（GPS 经纬度，用于 POI 搜索、天气查询、路线规划等）
                     skip_cache=skip_cache.lower() == "true",  # 🔥 是否跳过缓存
                     regenerate_message_id=regenerate_message_id  # 🔥 重新生成时的原消息ID

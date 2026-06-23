@@ -19,7 +19,7 @@ async def get_cache_list(
     """
     获取 QA 缓存列表（分页 + 搜索）
     
-    返回已缓存到 Milvus 的问答对
+    返回已缓存的问答对
     """
     try:
         message, ret, data = await qa_cache_service.get_cache_list(
@@ -65,7 +65,7 @@ async def delete_cache(
     """
     删除 QA 缓存
     
-    同时从 MongoDB 和 Milvus 中删除
+    同时删除缓存记录和向量记录
     """
     try:
         message, ret = await qa_cache_service.delete_cache(cache_id)

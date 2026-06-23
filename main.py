@@ -1,18 +1,19 @@
 """
 无人系统云端 RAG 应用主程序
-基于 FastAPI + LangChain + MongoDB + Milvus + Kafka + Redis
+基于 FastAPI + LangChain + MongoDB + Qdrant + Kafka + Redis
 使用 Beanie ODM 进行 MongoDB 对象映射
 """
 import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from internal.db.mongodb import init_mongodb, close_mongodb
-from internal.db.milvus import milvus_client  # 直接导入全局单例实例
+from internal.db.qdrant import qdrant_client, qa_qdrant_client
 from internal.db.redis import redis_client  # 直接导入全局单例实例
 from internal.document_client.document_processor import document_processor
 from internal.http_sever.app import create_app
 from internal.monitor import start_resource_monitoring, stop_resource_monitoring
 from pkg.agent_tools_mcp import mcp_manager  # 🔥 导入 MCP 管理器
+from pkg.constants.constants import QDRANT_COLLECTION_NAME, QDRANT_QA_COLLECTION_NAME, VECTOR_DIMENSION
 from log import logger
 
 
@@ -31,13 +32,16 @@ async def lifespan(app: FastAPI):
         logger.info("📦 正在连接 MongoDB...")
         await init_mongodb()
         logger.info("✓ MongoDB 连接成功")
-        
-        # ==================== 初始化 Milvus ====================
-        # 直接使用导入的全局单例实例，无需重新实例化
-        logger.info("🔍 正在连接 Milvus...")
-        milvus_client.connect()
-        logger.info("✓ Milvus 连接成功")
-        
+
+        # ==================== 初始化 Qdrant ====================
+        logger.info("🔎 正在连接 Qdrant...")
+        try:
+            qdrant_client.ensure_collection(QDRANT_COLLECTION_NAME, VECTOR_DIMENSION)
+            qa_qdrant_client.ensure_collection(QDRANT_QA_COLLECTION_NAME, VECTOR_DIMENSION)
+            logger.info("✓ Qdrant 连接成功")
+        except Exception as e:
+            logger.warning(f"Qdrant 暂不可用，知识库检索和向量缓存功能会暂时不可用: {e}")
+
         # ==================== 初始化 Redis ====================
         # 直接使用导入的全局单例实例，无需重新实例化
         logger.info("⚡ 正在连接 Redis...")
@@ -55,7 +59,7 @@ async def lifespan(app: FastAPI):
         # ==================== 启动资源监控 ====================
         logger.info("📊 正在启动资源监控...")
         start_resource_monitoring(interval=60)  # 每 60 秒监控一次
-        logger.info("✓ 资源监控已启动（CPU、内存、GPU、MongoDB、Milvus）")
+        logger.info("✓ 资源监控已启动（CPU、内存、GPU、MongoDB）")
         
         # ==================== 启动 MCP 服务 ====================
         logger.info("🔌 正在启动 MCP 工具服务...")
@@ -87,12 +91,6 @@ async def lifespan(app: FastAPI):
             logger.info("✓ MongoDB 连接已关闭")
         except Exception as e:
             logger.error(f"关闭 MongoDB 失败: {e}")
-        
-        try:
-            milvus_client.disconnect()
-            logger.info("✓ Milvus 连接已关闭")
-        except Exception as e:
-            logger.error(f"关闭 Milvus 失败: {e}")
         
         try:
             document_processor.stop()

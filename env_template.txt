@@ -36,13 +36,12 @@ VISION_MODEL=llava:7b
 MONGODB_URL=mongodb://root:rootpassword@localhost:27017/
 MONGODB_DATABASE=rag_platform
 
-# Milvus 向量数据库配置
-MILVUS_HOST=localhost
-MILVUS_PORT=19530
-MILVUS_USER=root
-MILVUS_PASSWORD=rootpassword
-MILVUS_DB_NAME=rag_platform
-MILVUS_COLLECTION_NAME=rag_documents
+# Qdrant 向量数据库配置
+QDRANT_HOST=localhost
+QDRANT_PORT=6333
+QDRANT_COLLECTION_NAME=documents
+QDRANT_QA_COLLECTION_NAME=qa_cache
+VECTOR_DIMENSION=1024
 
 # Redis 缓存配置
 REDIS_HOST=localhost
@@ -107,7 +106,3 @@ ENABLE_QA_CACHE=true
 
 # 相似问题检索阈值（0-1，越高越严格，0.95 表示 95% 相似度）
 QA_SIMILARITY_THRESHOLD=0.95
-
-# 问答缓存 Milvus 集合名称
-MILVUS_QA_COLLECTION_NAME=qa_cache
-

@@ -179,32 +179,32 @@
 
         <div class="db-card">
           <div class="db-header">
-            <el-icon class="db-icon milvus-icon"><Box /></el-icon>
-            <span class="db-name">Milvus</span>
-            <el-tag :type="milvusStatus === '正常' ? 'success' : 'danger'" size="small">
-              {{ milvusStatus }}
+            <el-icon class="db-icon qdrant-icon"><Box /></el-icon>
+            <span class="db-name">Qdrant</span>
+            <el-tag type="success" size="small">
+              正常
             </el-tag>
           </div>
           <div class="db-stats">
             <div class="db-stat">
-              <span class="stat-label">集合数</span>
-              <span class="stat-value">{{ latestResource?.milvus?.collections || 0 }}</span>
+              <span class="stat-label">检索次数</span>
+              <span class="stat-value">{{ latestResource?.app_stats?.vector_total_searches || 0 }}</span>
             </div>
             <div class="db-stat">
-              <span class="stat-label">集合名称</span>
-              <span class="stat-value">{{ latestResource?.milvus?.collection_name || '--' }}</span>
+              <span class="stat-label">Embedding</span>
+              <span class="stat-value">{{ latestResource?.app_stats?.embedding_total_calls || 0 }}</span>
             </div>
             <div class="db-stat">
-              <span class="stat-label">总向量数</span>
-              <span class="stat-value">{{ latestResource?.milvus?.total_entities || 0 }}</span>
+              <span class="stat-label">MongoDB 查询</span>
+              <span class="stat-value">{{ latestResource?.app_stats?.mongodb_total_queries || 0 }}</span>
             </div>
             <div class="db-stat">
-              <span class="stat-label">总行数</span>
-              <span class="stat-value">{{ latestResource?.milvus?.total_rows || 0 }}</span>
+              <span class="stat-label">LLM 调用</span>
+              <span class="stat-value">{{ latestResource?.app_stats?.llm_total_calls || 0 }}</span>
             </div>
             <div class="db-stat">
-              <span class="stat-label">分段数</span>
-              <span class="stat-value">{{ latestResource?.milvus?.num_segments || 0 }}</span>
+              <span class="stat-label">LLM 错误</span>
+              <span class="stat-value">{{ latestResource?.app_stats?.llm_total_errors || 0 }}</span>
             </div>
           </div>
         </div>
@@ -233,7 +233,7 @@ const statistics = ref(null) // 统计信息
 let refreshTimer = null // 定时器
 const performanceData = reactive({
   embedding: [],
-  milvus_search: [],
+  vector_search: [],
   llm_think: [],
   llm_action: [],
   llm_answer: [],
@@ -245,13 +245,13 @@ const activePerformanceType = ref('全部')
 const performanceTypeOptions = [
   { label: '全部', value: '全部' },
   { label: 'Embedding', value: 'embedding' },
-  { label: 'Milvus', value: 'milvus_search' },
+  { label: '向量检索', value: 'vector_search' },
   { label: 'LLM', value: 'llm' }
 ]
 
 const performanceTypes = [
   { value: 'embedding', label: 'Embedding 性能', unit: 's/10k tokens' },
-  { value: 'milvus_search', label: 'Milvus 搜索性能', unit: 's' },
+  { value: 'vector_search', label: '向量检索性能', unit: 's' },
   { value: 'llm_think', label: 'LLM 思考性能', unit: 's' },
   { value: 'llm_answer', label: 'LLM 答案性能', unit: 's' },
   { value: 'llm_total', label: 'LLM 总体性能', unit: 's' },
@@ -303,11 +303,6 @@ const avgResponseTime = computed(() => {
 
 const mongodbStatus = computed(() => {
   const status = latestResource.value?.mongodb?.status
-  return status === 'healthy' ? '正常' : '异常'
-})
-
-const milvusStatus = computed(() => {
-  const status = latestResource.value?.milvus?.status
   return status === 'healthy' ? '正常' : '异常'
 })
 
@@ -379,7 +374,6 @@ const fetchAllData = async () => {
     if (!userStore.token || userStore.userInfo.is_admin !== 1) {
       return
     }
-    console.error('获取监控数据失败:', error)
     ElMessage.error(`获取监控数据失败: ${error.message}`)
   } finally {
     // finally 中也要检查权限再更新 loading 状态
@@ -405,7 +399,6 @@ const fetchStatistics = async () => {
     if (!userStore.token || userStore.userInfo.is_admin !== 1) {
       return
     }
-    console.error('获取监控统计信息失败:', error)
   }
 }
 
@@ -755,7 +748,7 @@ watch(
   color: #10b981;
 }
 
-.milvus-icon {
+.qdrant-icon {
   color: #00d9ff;
 }
 
@@ -799,5 +792,4 @@ watch(
   color: var(--text-primary);
 }
 </style>
-
 

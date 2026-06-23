@@ -3,9 +3,9 @@ MCP 工具管理器
 负责启动和管理所有 MCP 服务连接
 """
 import asyncio
-import sys
+import os
 import logging
-from typing import List, Dict, Any, Callable
+from typing import List, Dict, Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -26,15 +26,13 @@ class MCPManager:
     
     async def start_all(self):
         """启动所有 MCP 服务"""
-        print("🚀 启动所有 MCP 服务...")
-        
         for i, tool_config in enumerate(MCP_TOOLS):
-            print(f"🔧 启动 {i+1}/{len(MCP_TOOLS)}: {tool_config['name']}")
-            
             # 创建服务器参数
             server_params = StdioServerParameters(
                 command=PYTHON_PATH,
-                args=[tool_config["script"]]
+                args=[tool_config["script"]],
+                env=dict(os.environ),
+                cwd=os.getcwd(),
             )
             
             # 启动客户端
@@ -83,22 +81,17 @@ class MCPManager:
                         elif tool_input is None and not kwargs:
                             kwargs = {}
                         
-                        print(f"[MCP] 调用工具: {tname}, 参数: {kwargs}", file=sys.stderr)
                         try:
                             result = await sess.call_tool(tname, arguments=kwargs)
-                            print(f"[MCP] 返回结果类型: {type(result)}", file=sys.stderr)
                             
                             if hasattr(result, 'content') and result.content:
                                 # MCP 返回的是 CallToolResult，包含 content 列表
                                 text = result.content[0].text if result.content else ""
-                                print(f"[MCP] 提取文本长度: {len(text)}", file=sys.stderr)
                                 # 🔥 直接返回原始文本（可能是 JSON），让 react_agent 处理
                                 return text
                             return str(result)
                         except Exception as e:
-                            print(f"[MCP] 工具调用失败: {e}", file=sys.stderr)
-                            import traceback
-                            traceback.print_exc(file=sys.stderr)
+                            logger.error(f"MCP 工具调用失败: {tname}: {e}", exc_info=True)
                             return f"工具调用失败: {str(e)}"
                     return async_tool
                 
@@ -121,25 +114,18 @@ class MCPManager:
             self.clients.append(client)
             self.sessions.append(session)
             
-            print(f"   ✅ {tool_config['name']} 已启动")
-        
-        print(f"✅ 所有 MCP 服务已启动，共加载 {len(self.tools)} 个工具")
-        print(f"   工具列表: {list(self.tool_map.keys())}")
+        logger.info(f"MCP 工具服务已启动，共加载 {len(self.tools)} 个工具")
         
         return self.tools, self.tool_map
     
     async def stop_all(self):
         """停止所有 MCP 服务"""
-        print("🔄 关闭所有 MCP 服务...")
-        
         for i, (session, client) in enumerate(zip(self.sessions, self.clients)):
-            print(f"🔄 关闭 {i+1}/{len(self.sessions)}")
             if session:
                 await session.__aexit__(None, None, None)
             if client:
                 await client.__aexit__(None, None, None)
-        
-        print("✅ 所有 MCP 服务已关闭")
+        logger.info("MCP 工具服务已关闭")
     
     def get_tools(self) -> List[Any]:
         """获取所有工具列表"""

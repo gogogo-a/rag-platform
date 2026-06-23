@@ -9,8 +9,8 @@ from log import logger
 from internal.document_client.message_client import message_client
 from internal.document_client.config_loader import config
 from internal.embedding.embedding_service import embedding_service
-from internal.db.milvus import milvus_client
-from pkg.constants.constants import MILVUS_COLLECTION_NAME
+from internal.db.qdrant import qdrant_client
+from pkg.constants.constants import QDRANT_COLLECTION_NAME, VECTOR_DIMENSION
 from internal.document_client.document_extract import extractor_manager
 from internal.monitor import record_performance  # 🔥 导入性能监控
 
@@ -23,7 +23,7 @@ class DocumentProcessor:
     1. 文档加载（PDF, DOCX, TXT）
     2. 文本分割
     3. Embedding 生成
-    4. 存储到 Milvus
+    4. 存储到 Qdrant
     5. 异步任务处理（Channel/Kafka）
     """
     
@@ -39,7 +39,7 @@ class DocumentProcessor:
             return
         
         self.embedding_config = config.embedding_config
-        self.milvus_config = config.milvus_config
+        self.vector_dimension = VECTOR_DIMENSION
         self.message_client = message_client
         
         # 从配置读取分块参数
@@ -68,7 +68,7 @@ class DocumentProcessor:
         Args:
             file_path: 文件路径
             document_uuid: 文档 UUID
-            collection_name: Milvus 集合名称（可选）
+            collection_name: 向量集合名称（可选）
             extra_metadata: 额外元数据（可选）
             permission: 文档权限（0=普通用户可见，1=仅管理员可见）
         
@@ -148,7 +148,7 @@ class DocumentProcessor:
                 text_length=text_length
             )
             
-            # 5. 准备 Milvus 数据
+            # 5. 准备向量数据
             texts = []
             metadata_list = []
             
@@ -164,28 +164,13 @@ class DocumentProcessor:
                     **chunk["metadata"]
                 })
             
-            # 6. 存储到 Milvus
+            # 6. 存储到 Qdrant
             if collection_name is None:
-                collection_name = MILVUS_COLLECTION_NAME
+                collection_name = QDRANT_COLLECTION_NAME
             
-            # 确保 collection 存在
-            existing_collections = milvus_client.list_collections()
-            if collection_name not in existing_collections:
-                dimension = self.milvus_config.get('dimension', 1024)
-                logger.info(f"创建 Milvus collection: {collection_name}, 维度: {dimension}")
-                milvus_client.create_collection(
-                    collection_name=collection_name,
-                    dimension=dimension,
-                    description="文档向量存储",
-                    metric_type="COSINE"
-                )
-            
-            # 转换 embeddings 为列表
-            embeddings_list = [emb.tolist() for emb in embeddings]
-            
-            ids = milvus_client.insert_vectors(
+            ids = qdrant_client.upsert_documents(
                 collection_name=collection_name,
-                embeddings=embeddings_list,
+                embeddings=embeddings,
                 texts=texts,
                 metadata=metadata_list
             )
@@ -218,7 +203,7 @@ class DocumentProcessor:
             else:
                 return {
                     "success": False,
-                    "message": "存储到 Milvus 失败"
+                    "message": "向量存储失败"
                 }
                 
         except Exception as e:
@@ -241,7 +226,7 @@ class DocumentProcessor:
         Args:
             text: 文本内容
             document_uuid: 文档 UUID
-            collection_name: Milvus 集合名称（可选）
+            collection_name: 向量集合名称（可选）
             metadata: 元数据（可选）
         
         Returns:
@@ -299,7 +284,7 @@ class DocumentProcessor:
                 source="text_upload"  # 标记为文本上传
             )
             
-            # 3. 准备 Milvus 元数据
+            # 3. 准备向量元数据
             metadata_list = []
             for i, chunk in enumerate(chunks):
                 metadata_list.append({
@@ -309,28 +294,13 @@ class DocumentProcessor:
                     **chunk["metadata"]
                 })
             
-            # 4. 存储到 Milvus
+            # 4. 存储到 Qdrant
             if collection_name is None:
-                collection_name = MILVUS_COLLECTION_NAME
+                collection_name = QDRANT_COLLECTION_NAME
             
-            # 确保 collection 存在
-            existing_collections = milvus_client.list_collections()
-            if collection_name not in existing_collections:
-                dimension = self.milvus_config.get('dimension', 1024)
-                logger.info(f"创建 Milvus collection: {collection_name}, 维度: {dimension}")
-                milvus_client.create_collection(
-                    collection_name=collection_name,
-                    dimension=dimension,
-                    description="文档向量存储",
-                    metric_type="COSINE"
-                )
-            
-            # 转换 embeddings 为列表
-            embeddings_list = [emb.tolist() for emb in embeddings]
-            
-            ids = milvus_client.insert_vectors(
+            ids = qdrant_client.upsert_documents(
                 collection_name=collection_name,
-                embeddings=embeddings_list,
+                embeddings=embeddings,
                 texts=texts,
                 metadata=metadata_list
             )
@@ -347,7 +317,7 @@ class DocumentProcessor:
             else:
                 return {
                     "success": False,
-                    "message": "存储到 Milvus 失败"
+                    "message": "向量存储失败"
                 }
                 
         except Exception as e:
@@ -586,16 +556,8 @@ class DocumentProcessor:
         logger.info(f"删除文档: {document_id}")
         
         try:
-            collection_name = MILVUS_COLLECTION_NAME
-            success = milvus_client.delete_by_ids(
-                collection_name=collection_name,
-                ids=[document_id]
-            )
-            
-            if success:
-                logger.info(f"文档已从 Milvus 删除: {document_id}")
-            else:
-                logger.error(f"从 Milvus 删除失败: {document_id}")
+            qdrant_client.delete_by_document_uuid(document_id, collection_name=QDRANT_COLLECTION_NAME)
+            logger.info(f"文档向量已删除: {document_id}")
                 
         except Exception as e:
             logger.error(f"删除任务异常: {document_id}, 错误: {e}", exc_info=True)
@@ -640,7 +602,7 @@ if __name__ == "__main__":
     test_task = {
         "task_type": "embedding",
         "document_id": "test_doc_001",
-        "content": "这是一个测试文档，用于验证 Embedding 和 Milvus 存储功能",
+        "content": "这是一个测试文档，用于验证 Embedding 和向量存储功能",
         "metadata": {
             "title": "测试文档",
             "author": "白总"

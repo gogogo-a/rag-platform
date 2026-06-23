@@ -9,8 +9,8 @@ from .base_model import EmbeddingModelConfig
 
 BGE_LARGE_ZH_V1_5 = EmbeddingModelConfig(
     name="bge-large-zh-v1.5",
-    model_path="BAAI/bge-large-zh-v1.5",
-    description="BAAI 出品，中文效果最好",
+    model_path="models/bge-large-zh-v1.5",
+    description="本地知识库检索向量模型",
     provider="baai",
     model_type="local",
     dimension=1024,
@@ -77,4 +77,3 @@ def get_embedding_model(model_name: str) -> EmbeddingModelConfig:
 def list_embedding_models():
     """列出所有可用的 Embedding 模型"""
     return list(EMBEDDING_MODELS.values())
-

@@ -20,7 +20,7 @@ class MonitorService:
     MONITOR_TYPES = {
         "performance": [
             "embedding",
-            "milvus_search",
+            "vector_search",
             "llm_think",
             "llm_action",
             "llm_answer",
@@ -82,7 +82,7 @@ class MonitorService:
         获取性能监控数据
         
         Args:
-            monitor_type: 监控类型（embedding, milvus_search, llm_think 等）
+            monitor_type: 监控类型（embedding, vector_search, llm_think 等）
             date: 日期字符串，格式 YYYY-MM-DD（可选，默认今天）
             limit: 返回的最大记录数（可选，默认100）
             offset: 偏移量，用于分页（默认0）

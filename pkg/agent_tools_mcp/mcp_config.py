@@ -1,15 +1,12 @@
-"""
-MCP 工具配置
-定义所有 MCP 工具的路径和启动参数
-"""
-import os
+"""MCP 工具配置。"""
+import sys
 from pathlib import Path
 
 # 获取当前文件所在目录
 CURRENT_DIR = Path(__file__).parent.absolute()
 
 # Python 解释器路径（使用当前环境）
-PYTHON_PATH = os.sys.executable
+PYTHON_PATH = sys.executable
 
 # MCP 工具配置列表
 MCP_TOOLS = [

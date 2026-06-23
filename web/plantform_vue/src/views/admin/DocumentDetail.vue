@@ -309,7 +309,6 @@ const fetchDocumentDetail = async () => {
     const data = await getDocumentDetail(documentId)
     document.value = data
   } catch (error) {
-    console.error('获取文档详情失败:', error)
     ElMessage.error('获取文档详情失败')
   } finally {
     loading.value = false
@@ -396,7 +395,6 @@ const handleDownload = async () => {
 
     ElMessage.success('下载成功')
   } catch (error) {
-    console.error('下载文档失败:', error)
     ElMessage.error('下载失败: ' + error.message)
   } finally {
     isDownloading.value = false
@@ -422,7 +420,6 @@ const handleDelete = async () => {
     router.push('/admin/documents')
   } catch (error) {
     if (error !== 'cancel') {
-      console.error('删除文档失败:', error)
       ElMessage.error('删除文档失败')
     }
   }

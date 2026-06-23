@@ -134,7 +134,6 @@ const fetchUserList = async () => {
       total.value = 0
     }
   } catch (error) {
-    console.error('获取用户列表失败:', error)
     ElMessage.error('获取用户列表失败')
   } finally {
     loading.value = false
@@ -187,7 +186,6 @@ const handleSetAdmin = async (user) => {
     fetchUserList()
   } catch (error) {
     if (error !== 'cancel') {
-      console.error('设置管理员失败:', error)
       ElMessage.error('设置管理员失败')
     }
   }
@@ -212,7 +210,6 @@ const handleDelete = async (user) => {
     fetchUserList()
   } catch (error) {
     if (error !== 'cancel') {
-      console.error('删除用户失败:', error)
       ElMessage.error('删除用户失败')
     }
   }

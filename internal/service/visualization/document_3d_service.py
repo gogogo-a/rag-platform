@@ -8,11 +8,9 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 import numpy as np
 
-from pymilvus import Collection
-
 from log import logger
-from internal.db.milvus import milvus_client
-from pkg.constants.constants import MILVUS_COLLECTION_NAME, MILVUS_QA_COLLECTION_NAME
+from internal.db.qdrant import qdrant_client, qa_qdrant_client
+from pkg.constants.constants import QDRANT_COLLECTION_NAME, QDRANT_QA_COLLECTION_NAME
 
 
 class Document3DService:
@@ -26,7 +24,7 @@ class Document3DService:
         return cls._instance
     
     def __init__(self):
-        self.collection_name = MILVUS_COLLECTION_NAME
+        self.collection_name = QDRANT_COLLECTION_NAME
         # 缓存降维结果 {cache_key: {coordinates, timestamp, doc_count}}
         self._cache: Dict[str, Dict] = {}
         self._cache_ttl = 86400  # 缓存 24 小时
@@ -75,29 +73,20 @@ class Document3DService:
             (message, ret, data)
         """
         try:
-            # 检查集合是否存在
-            existing_collections = milvus_client.list_collections()
-            if self.collection_name not in existing_collections:
-                return "集合不存在", -2, None
-            
-            collection = Collection(self.collection_name)
-            collection.load()
-            
-            # 查询所有向量（带元数据）
-            # 注意：Milvus 不支持 GROUP BY，需要在应用层去重
-            results = collection.query(
-                expr="id >= 0",
-                output_fields=["id", "embedding", "text", "metadata"],
-                limit=16384  # Milvus 单次查询上限
+            results = qdrant_client.scroll_all(
+                collection_name=self.collection_name,
+                limit=16384,
+                with_vectors=True
             )
-            
+
             if not results:
                 return "暂无文档数据", 0, {"total": 0, "documents": [], "coordinates": []}
             
             # 按 document_uuid 去重，每个文档只保留第一个 chunk
             doc_map: Dict[str, Dict] = {}
             for item in results:
-                metadata = item.get("metadata", {})
+                payload = item.payload or {}
+                metadata = payload.get("metadata", {})
                 doc_uuid = metadata.get("document_uuid")
                 
                 if not doc_uuid:
@@ -106,7 +95,7 @@ class Document3DService:
                 # 关键词过滤
                 if keyword:
                     filename = metadata.get("filename", "")
-                    text = item.get("text", "")
+                    text = payload.get("text", "")
                     if keyword.lower() not in filename.lower() and keyword.lower() not in text.lower():
                         continue
                 
@@ -114,9 +103,9 @@ class Document3DService:
                 if doc_uuid not in doc_map:
                     doc_map[doc_uuid] = {
                         "uuid": doc_uuid,
-                        "milvus_id": item["id"],
-                        "embedding": item["embedding"],
-                        "text": item.get("text", "")[:100],  # 前 100 字符
+                        "vector_id": str(item.id),
+                        "embedding": item.vector,
+                        "text": payload.get("text", "")[:100],  # 前 100 字符
                         "metadata": metadata
                     }
             
@@ -347,7 +336,7 @@ class QACache3DService:
         return cls._instance
     
     def __init__(self):
-        self.collection_name = MILVUS_QA_COLLECTION_NAME
+        self.collection_name = QDRANT_QA_COLLECTION_NAME
         self._cache: Dict[str, Dict] = {}
         self._cache_ttl = 86400  # 24 小时
     
@@ -379,30 +368,21 @@ class QACache3DService:
         获取 QA 缓存向量数据用于 3D 可视化
         """
         try:
-            from pymilvus import Collection, utility
-            
-            # 检查集合是否存在
-            if not utility.has_collection(self.collection_name):
-                return "QA 缓存集合不存在", -2, None
-            
-            collection = Collection(self.collection_name)
-            collection.load()
-            
-            # 查询所有 QA 缓存
-            results = collection.query(
-                expr="id >= 0",
-                output_fields=["id", "embedding", "text", "metadata"],
-                limit=16384
+            results = qa_qdrant_client.scroll_all(
+                collection_name=self.collection_name,
+                limit=16384,
+                with_vectors=True
             )
-            
+
             if not results:
                 return "暂无 QA 缓存数据", 0, {"total": 0, "items": []}
             
             # 关键词过滤
             filtered = []
             for item in results:
-                text = item.get("text", "")
-                metadata = item.get("metadata", {})
+                payload = item.payload or {}
+                text = payload.get("text", "")
+                metadata = payload.get("metadata", {})
                 answer_preview = metadata.get("answer_preview", "")
                 
                 if keyword:
@@ -422,8 +402,8 @@ class QACache3DService:
                 return "查询成功", 0, {"total": total, "items": []}
             
             # 提取向量进行降维
-            embeddings = [item["embedding"] for item in paged]
-            ids = [str(item["id"]) for item in paged]
+            embeddings = [item.vector for item in paged]
+            ids = [str(item.id) for item in paged]
             
             # 检查缓存
             cache_key = self._get_cache_key(ids)
@@ -441,10 +421,11 @@ class QACache3DService:
             # 构建返回数据
             items = []
             for i, item in enumerate(paged):
-                metadata = item.get("metadata", {})
+                payload = item.payload or {}
+                metadata = payload.get("metadata", {})
                 items.append({
-                    "id": item["id"],
-                    "question": item.get("text", "")[:100],
+                    "id": str(item.id),
+                    "question": payload.get("text", "")[:100],
                     "answer_preview": metadata.get("answer_preview", "")[:100],
                     "thought_chain_id": metadata.get("thought_chain_id"),
                     "created_at": metadata.get("created_at"),

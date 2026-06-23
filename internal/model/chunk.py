@@ -23,7 +23,7 @@ class ChunkModel(Document):
     page_number: Optional[int] = Field(None, description="所在页码")
     
     # 向量数据库关联
-    vector_id: Optional[int] = Field(None, description="Milvus 中的记录 ID")
+    vector_id: Optional[int] = Field(None, description="Qdrant 中的记录 ID")
     embedding_model: Optional[str] = Field(None, description="使用的 Embedding 模型名称")
     
     metadata: Dict[str, Any] = Field(default={}, description="扩展元数据")

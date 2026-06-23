@@ -4,7 +4,7 @@
 定期收集系统和服务的性能指标：
 - CPU、内存、GPU 使用率
 - MongoDB 连接数、操作统计
-- Milvus 集合统计、内存使用
+- 向量库集合统计
 - Kafka 主题信息（如果启用）
 - LLM API 调用统计
 
@@ -13,6 +13,7 @@
 
 import time
 import json
+import os
 import threading
 from pathlib import Path
 from datetime import datetime
@@ -66,7 +67,7 @@ class ResourceMonitor:
             "llm_tokens": 0,
             "llm_errors": 0,
             "embedding_calls": 0,
-            "milvus_searches": 0,
+            "vector_searches": 0,
             "mongodb_queries": 0
         }
         
@@ -188,52 +189,6 @@ class ResourceMonitor:
         
         return metrics
     
-    def _collect_milvus_metrics(self) -> Dict[str, Any]:
-        """收集 Milvus 性能指标"""
-        metrics = {}
-        
-        try:
-            from internal.db.milvus import milvus_client
-            from pkg.constants.constants import MILVUS_COLLECTION_NAME
-            from pymilvus import utility
-            
-            if milvus_client:
-                # 动态获取所有集合
-                all_collections = utility.list_collections()
-                total_collections = len(all_collections)
-                
-                # 初始化 milvus 统计
-                metrics["milvus"] = {
-                    "status": "healthy",  # 添加健康状态
-                    "collections": total_collections,  # 动态获取集合数量
-                    "total_entities": 0,
-                }
-                
-                # 检查主集合是否存在
-                if utility.has_collection(MILVUS_COLLECTION_NAME):
-                    # 获取集合
-                    collection = milvus_client.get_collection(MILVUS_COLLECTION_NAME)
-                    
-                    if collection:
-                        metrics["milvus"]["collection_name"] = MILVUS_COLLECTION_NAME
-                        metrics["milvus"]["total_entities"] = collection.num_entities
-                        
-                        # 尝试获取集合详细信息
-                        try:
-                            # 获取集合统计信息
-                            stats = utility.get_query_segment_info(MILVUS_COLLECTION_NAME)
-                            if stats:
-                                total_rows = sum(seg.num_rows for seg in stats)
-                                metrics["milvus"]["total_rows"] = total_rows
-                                metrics["milvus"]["num_segments"] = len(stats)
-                        except:
-                            pass
-                
-        except Exception as e:
-            logger.error(f"收集 Milvus 指标失败: {e}")
-        
-        return metrics
-    
     def _collect_kafka_metrics(self) -> Dict[str, Any]:
         """收集 Kafka 性能指标（如果启用）"""
         metrics = {}
@@ -255,7 +210,7 @@ class ResourceMonitor:
                 "llm_total_tokens": self.stats["llm_tokens"],
                 "llm_total_errors": self.stats["llm_errors"],
                 "embedding_total_calls": self.stats["embedding_calls"],
-                "milvus_total_searches": self.stats["milvus_searches"],
+                "vector_total_searches": self.stats["vector_searches"],
                 "mongodb_total_queries": self.stats["mongodb_queries"],
             }
         }
@@ -271,10 +226,6 @@ class ResourceMonitor:
         # MongoDB（使用同步客户端）
         mongodb_metrics = self._collect_mongodb_metrics_sync()
         metrics.update(mongodb_metrics)
-        
-        # Milvus
-        milvus_metrics = self._collect_milvus_metrics()
-        metrics.update(milvus_metrics)
         
         # Kafka
         kafka_metrics = self._collect_kafka_metrics()
@@ -366,9 +317,9 @@ class ResourceMonitor:
         """记录 Embedding 调用"""
         self.stats["embedding_calls"] += 1
     
-    def record_milvus_search(self):
-        """记录 Milvus 搜索"""
-        self.stats["milvus_searches"] += 1
+    def record_vector_search(self):
+        """记录 向量检索"""
+        self.stats["vector_searches"] += 1
     
     def record_mongodb_query(self):
         """记录 MongoDB 查询"""
@@ -401,12 +352,11 @@ def record_embedding_call():
     resource_monitor.record_embedding_call()
 
 
-def record_milvus_search():
-    """记录 Milvus 搜索"""
-    resource_monitor.record_milvus_search()
+def record_vector_search():
+    """记录 向量检索"""
+    resource_monitor.record_vector_search()
 
 
 def record_mongodb_query():
     """记录 MongoDB 查询"""
     resource_monitor.record_mongodb_query()
-

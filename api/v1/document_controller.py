@@ -29,7 +29,7 @@ async def upload_document(
     1. 保存文件到本地
     2. 记录到 MongoDB（包含 permission）
     3. 提交到 Kafka 进行异步 Embedding
-    4. 存储向量到 Milvus（后台处理，元数据包含 permission）
+    4. 存储向量到 Qdrant（后台处理，元数据包含 permission）
     
     返回格式：
     - 单个文件：返回单个文档信息
@@ -150,7 +150,7 @@ async def get_document_list(
     - uuid: 文档唯一标识
     - name: 文档名称
     - uploaded_at: 上传时间
-    - chunk_count: 文本块数量（从 Milvus 查询）
+    - chunk_count: 文本块数量（从 Qdrant 查询）
     """
     try:
         logger.info(f"收到文档列表请求: page={page}, page_size={page_size}, keyword={keyword}")
@@ -185,7 +185,7 @@ async def get_document_detail(
     - page: 文档页数
     - url: 文档访问URL
     - uploaded_at: 上传时间
-    - chunk_count: 文本块数量（从 Milvus 查询）
+    - chunk_count: 文本块数量（从 Qdrant 查询）
     """
     try:
         logger.info(f"收到文档详情请求: {document_id}")
@@ -205,7 +205,7 @@ async def delete_document(
     document_id: str = Path(..., description="文档UUID")
 ):
     """
-    删除文档（包括 MongoDB 记录、Milvus 向量、物理文件）
+    删除文档（包括 MongoDB 记录、Qdrant 向量、物理文件）
     
     - **document_id**: 文档UUID
     """

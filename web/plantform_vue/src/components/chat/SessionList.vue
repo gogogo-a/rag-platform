@@ -188,7 +188,6 @@ const handleDeleteSession = async (session) => {
   } catch (error) {
     // 用户取消删除
     if (error !== 'cancel') {
-      console.error('删除会话失败:', error)
       ElMessage.error('删除失败，请重试')
     }
   }
@@ -222,7 +221,6 @@ const handleRenameSession = async () => {
     
     renameDialogVisible.value = false
   } catch (error) {
-    console.error('重命名失败:', error)
     ElMessage.error('重命名失败，请重试')
   }
 }

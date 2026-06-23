@@ -179,7 +179,6 @@ const handleSendCode = async () => {
       }
     }, 1000)
   } catch (error) {
-    console.error('发送验证码失败:', error)
   } finally {
     sendingCode.value = false
   }
@@ -205,7 +204,6 @@ const handleRegister = async () => {
       ElMessage.success('注册成功，请登录')
       router.push('/login')
     } catch (error) {
-      console.error('注册失败:', error)
       ElMessage.error('注册失败，请检查信息后重试')
     } finally {
       loading.value = false

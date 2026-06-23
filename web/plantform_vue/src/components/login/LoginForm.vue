@@ -177,7 +177,6 @@ const handlePasswordLogin = async () => {
         ElMessage.error('登录失败，请检查用户名和密码')
       }
     } catch (error) {
-      console.error('登录失败:', error)
     } finally {
       loading.value = false
     }
@@ -205,7 +204,6 @@ const handleEmailLogin = async () => {
         ElMessage.error('登录失败，请检查邮箱和验证码')
       }
     } catch (error) {
-      console.error('登录失败:', error)
     } finally {
       loading.value = false
     }
@@ -240,7 +238,6 @@ const handleSendCode = async () => {
       }
     }, 1000)
   } catch (error) {
-    console.error('发送验证码失败:', error)
   } finally {
     sendingCode.value = false
   }

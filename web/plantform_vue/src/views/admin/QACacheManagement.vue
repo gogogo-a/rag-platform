@@ -175,7 +175,6 @@ const fetchCacheList = async () => {
       total.value = 0
     }
   } catch (error) {
-    console.error('获取 QA 缓存列表失败:', error)
     ElMessage.error('获取 QA 缓存列表失败')
   } finally {
     loading.value = false
@@ -209,13 +208,12 @@ const handleSizeChange = () => {
 // 点击行查看详情
 const handleRowClick = async (row) => {
   try {
-    // 优先使用 thought_chain_id，否则使用 milvus_id
-    const cacheId = row.thought_chain_id || String(row.milvus_id)
+    // 优先使用 thought_chain_id，否则使用 vector_id
+    const cacheId = row.thought_chain_id || String(row.vector_id)
     const data = await getQACacheDetailAdmin(cacheId)
-    detailData.value = { ...data, milvus_id: row.milvus_id }
+    detailData.value = { ...data, vector_id: row.vector_id }
     showDetailDialog.value = true
   } catch (error) {
-    console.error('获取详情失败:', error)
     ElMessage.error('获取详情失败')
   }
 }
@@ -238,15 +236,14 @@ const handleDelete = async (cache) => {
       }
     )
     
-    // 优先使用 thought_chain_id，否则使用 milvus_id
-    const cacheId = cache.thought_chain_id || String(cache.milvus_id)
+    // 优先使用 thought_chain_id，否则使用 vector_id
+    const cacheId = cache.thought_chain_id || String(cache.vector_id)
     await deleteQACacheAdmin(cacheId)
     
     ElMessage.success('删除成功')
     fetchCacheList()
   } catch (error) {
     if (error !== 'cancel') {
-      console.error('删除 QA 缓存失败:', error)
       ElMessage.error('删除 QA 缓存失败')
     }
   }
@@ -267,8 +264,8 @@ const handleDeleteFromDetail = async () => {
       }
     )
     
-    // 优先使用 thought_chain_id，否则使用 milvus_id
-    const cacheId = detailData.value.thought_chain_id || String(detailData.value.milvus_id)
+    // 优先使用 thought_chain_id，否则使用 vector_id
+    const cacheId = detailData.value.thought_chain_id || String(detailData.value.vector_id)
     await deleteQACacheAdmin(cacheId)
     
     ElMessage.success('删除成功')
@@ -276,7 +273,6 @@ const handleDeleteFromDetail = async () => {
     fetchCacheList()
   } catch (error) {
     if (error !== 'cancel') {
-      console.error('删除 QA 缓存失败:', error)
       ElMessage.error('删除 QA 缓存失败')
     }
   }

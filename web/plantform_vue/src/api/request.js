@@ -26,7 +26,6 @@ request.interceptors.request.use(
     return config
   },
   (error) => {
-    console.error('请求错误:', error)
     return Promise.reject(error)
   }
 )
@@ -51,8 +50,6 @@ request.interceptors.response.use(
     }
   },
   (error) => {
-    console.error('响应错误:', error)
-    
     // 处理不同的错误状态码
     if (error.response) {
       switch (error.response.status) {

@@ -13,7 +13,7 @@ router = APIRouter(prefix="/monitors", tags=["性能监控"])
 @router.get("/performance/{monitor_type}", summary="获取性能监控数据")
 async def get_performance_monitor(
     request: Request,
-    monitor_type: str = Path(..., description="监控类型（embedding, milvus_search, llm_think, llm_action, llm_answer, llm_total, agent_total）"),
+    monitor_type: str = Path(..., description="监控类型（embedding, vector_search, llm_think, llm_action, llm_answer, llm_total, agent_total）"),
     date: Optional[str] = Query(None, description="日期（格式：YYYY-MM-DD），不提供则返回今天的数据"),
     limit: Optional[int] = Query(100, ge=1, le=1000, description="每页数量"),
     offset: int = Query(0, ge=0, description="偏移量（用于分页）")
@@ -23,7 +23,7 @@ async def get_performance_monitor(
     
     **监控类型：**
     - `embedding`: Embedding 向量化性能
-    - `milvus_search`: Milvus 搜索性能
+    - `vector_search`: 向量检索性能
     - `llm_think`: LLM 思考过程性能
     - `llm_action`: LLM 动作执行性能
     - `llm_answer`: LLM 答案生成性能
@@ -69,7 +69,7 @@ async def get_performance_monitor(
     curl "http://localhost:8000/monitors/performance/llm_total?date=2025-10-25"
     
     # 分页查询
-    curl "http://localhost:8000/monitors/performance/milvus_search?limit=50&offset=100"
+    curl "http://localhost:8000/monitors/performance/vector_search?limit=50&offset=100"
     ```
     """
     try:
@@ -93,7 +93,7 @@ async def get_resource_monitor(
     offset: int = Query(0, ge=0, description="偏移量（用于分页）")
 ):
     """
-    获取系统资源监控数据（CPU、内存、GPU、MongoDB、Milvus）
+    获取系统资源监控数据（CPU、内存、GPU、MongoDB、Qdrant）
     
     **参数：**
     - **date**: 日期（格式：YYYY-MM-DD），可选，默认今天
@@ -120,7 +120,7 @@ async def get_resource_monitor(
                         "disk_percent": 55.1
                     },
                     "mongodb": {...},
-                    "milvus": {...},
+                    "qdrant": {...},
                     "app_stats": {...}
                 }
             ]
@@ -172,7 +172,7 @@ async def get_all_monitors(
             "date": "2025-10-26",
             "performance": {
                 "embedding": {"total": 150, "data": [...]},
-                "milvus_search": {"total": 80, "data": [...]},
+                "vector_search": {"total": 80, "data": [...]},
                 "llm_total": {"total": 50, "data": [...]}
             },
             "resource": {
@@ -255,7 +255,7 @@ async def get_monitor_types(request: Request):
         "data": {
             "performance": [
                 "embedding",
-                "milvus_search",
+                "vector_search",
                 "llm_think",
                 "llm_action",
                 "llm_answer",
@@ -307,7 +307,7 @@ async def get_monitor_statistics(request: Request):
                     "max_duration_ms": 230.67,
                     "recent": [...]
                 },
-                "milvus_search": {
+                "vector_search": {
                     "count": 80,
                     "avg_duration_ms": 45.23,
                     "min_duration_ms": 20.15,

@@ -351,7 +351,7 @@ def build_sessions_and_messages(now: datetime) -> tuple[list[dict[str, Any]], li
                 "like_count": likes,
                 "dislike_count": dislikes,
                 "is_cached": True,
-                "milvus_id": 20_000 + index,
+                "vector_id": 20_000 + index,
                 "user_feedbacks": {ADMIN_ID: "like"} if likes else {},
                 "created_at": question_time + timedelta(seconds=16),
             }
@@ -479,7 +479,7 @@ def seed_monitor_and_logs(now: datetime) -> None:
                     "db_size_mb": 18.73,
                     "opcounters_query": 240 + i * 7,
                 },
-                "milvus": {
+                "qdrant": {
                     "status": "healthy",
                     "collections": 2,
                     "collection_name": "documents",
@@ -498,7 +498,7 @@ def seed_monitor_and_logs(now: datetime) -> None:
 
     perf_specs = {
         "embedding": ("批量向量化", 126.4),
-        "milvus_search": ("知识库召回", 42.7),
+        "vector_search": ("知识库召回", 42.7),
         "llm_think": ("意图分析", 310.8),
         "llm_action": ("工具调用", 188.2),
         "llm_answer": ("答案生成", 1380.5),

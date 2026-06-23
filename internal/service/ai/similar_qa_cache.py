@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 
 from log import logger
-from internal.db.milvus import milvus_client
+from internal.db.qdrant import qa_qdrant_client
 from internal.embedding.embedding_service import embedding_service
 from internal.model.thought_chain import ThoughtChainModel
 from pkg.constants.constants import (
@@ -82,10 +82,10 @@ class SimilarQACache:
             # 1. 生成问题的 embedding
             question_embedding = embedding_service.encode_query(question)
             
-            # 2. 在 Milvus 中检索相似问题（获取多个结果用于筛选）
-            similar_results = milvus_client.search_similar_questions(
-                query_embedding=question_embedding,
-                top_k=5,  # 获取多个结果
+            # 2. 在向量库中检索相似问题
+            similar_results = qa_qdrant_client.search_qa_cache(
+                embedding=question_embedding,
+                top_k=5,
                 score_threshold=self.similarity_threshold
             )
             
@@ -145,7 +145,7 @@ class SimilarQACache:
         3. 按 (相似度 * 0.6 + 点赞权重 * 0.4) 排序
         
         Args:
-            results: Milvus 搜索结果列表
+            results: 向量检索结果列表
             
         Returns:
             最佳匹配结果
@@ -225,8 +225,8 @@ class SimilarQACache:
             是否删除成功
         """
         try:
-            # 1. 从 Milvus 删除
-            milvus_client.delete_qa_cache_by_thought_chain_id(thought_chain_id)
+            # 1. 从向量库删除
+            qa_qdrant_client.delete_points([thought_chain_id])
             
             # 2. 更新 MongoDB 中的缓存状态
             thought_chain = await ThoughtChainModel.find_one(
@@ -234,7 +234,7 @@ class SimilarQACache:
             )
             if thought_chain:
                 thought_chain.is_cached = False
-                thought_chain.milvus_id = None
+                thought_chain.vector_id = None
                 await thought_chain.save()
             
             logger.info(f"✓ 已删除 QA 缓存: {thought_chain_id}")

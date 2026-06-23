@@ -471,7 +471,6 @@ const loadData = async () => {
       ElMessage.info('暂无 QA 缓存数据')
     }
   } catch (error) {
-    console.error('加载失败:', error)
     ElMessage.error('加载失败')
   } finally {
     loading.value = false

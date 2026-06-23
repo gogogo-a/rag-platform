@@ -196,7 +196,6 @@ const handleUpdateProfile = async () => {
       ElMessage.success('个人信息更新成功')
       profileDialogVisible.value = false
     } catch (error) {
-      console.error('更新个人信息失败:', error)
       ElMessage.error('更新失败，请重试')
     } finally {
       updating.value = false

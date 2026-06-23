@@ -17,20 +17,14 @@ HF_HUB_OFFLINE = os.getenv("HF_HUB_OFFLINE", "1")
 # 设置到环境变量中，影响后续导入的库
 if TRANSFORMERS_OFFLINE == "1":
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    # 使用 stderr 避免污染 MCP 的 stdout
-    import sys
-    print("✓ HuggingFace Transformers 离线模式已启用", file=sys.stderr)
 
 if HF_HUB_OFFLINE == "1":
     os.environ["HF_HUB_OFFLINE"] = "1"
-    import sys
-    print("✓ HuggingFace Hub 离线模式已启用", file=sys.stderr)
 
 # HuggingFace 镜像配置（可选，用于国内访问）
 HF_ENDPOINT = os.getenv("HF_ENDPOINT", "")
 if HF_ENDPOINT:
     os.environ["HF_ENDPOINT"] = HF_ENDPOINT
-    print(f"✓ HuggingFace 镜像已设置: {HF_ENDPOINT}")
 
 # Ollama 配置
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -49,13 +43,12 @@ SUMMARY_MESSAGE_THRESHOLD = int(os.getenv("SUMMARY_MESSAGE_THRESHOLD", "10"))
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://root:rootpassword@localhost:27017/")
 MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "rag_platform")
 
-# Milvus 向量数据库配置
-MILVUS_HOST = os.getenv("MILVUS_HOST", "localhost")
-MILVUS_PORT = int(os.getenv("MILVUS_PORT", "19530"))
-MILVUS_USER = os.getenv("MILVUS_USER", "root")
-MILVUS_PASSWORD = os.getenv("MILVUS_PASSWORD", "rootpassword")
-MILVUS_DB_NAME = os.getenv("MILVUS_DB_NAME", "rag_platform")
-MILVUS_COLLECTION_NAME = os.getenv("MILVUS_COLLECTION_NAME", "documents")
+# 向量数据库配置
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+QDRANT_COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME", "documents")
+QDRANT_QA_COLLECTION_NAME = os.getenv("QDRANT_QA_COLLECTION_NAME", "qa_cache")
+VECTOR_DIMENSION = int(os.getenv("VECTOR_DIMENSION", "1024"))
 
 # Redis 缓存配置
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
@@ -140,9 +133,6 @@ BAIDU_TOKEN = os.getenv("BAIDU_TOKEN", "")
 GAODE_API_KEY = os.getenv("GAODE_API_KEY", "")
 
 # ==================== 问答缓存配置 ====================
-# 问答缓存 Milvus 集合名称（与文档集合分开）
-MILVUS_QA_COLLECTION_NAME = os.getenv("MILVUS_QA_COLLECTION_NAME", "qa_cache")
-
 # 相似问题检索阈值（0-1，越高越严格，0.95 表示 95% 相似度）
 QA_SIMILARITY_THRESHOLD = float(os.getenv("QA_SIMILARITY_THRESHOLD", "0.95"))
 

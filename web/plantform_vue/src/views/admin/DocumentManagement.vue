@@ -258,7 +258,6 @@ const fetchDocumentList = async () => {
       total.value = 0
     }
   } catch (error) {
-    console.error('获取文档列表失败:', error)
     ElMessage.error('获取文档列表失败')
   } finally {
     loading.value = false
@@ -380,7 +379,6 @@ const handleConfirmUpload = async () => {
     // 刷新列表
     await fetchDocumentList()
   } catch (error) {
-    console.error('文件上传失败:', error)
     ElMessage.error(error.message || '文件上传失败，请重试')
   } finally {
     uploading.value = false
@@ -445,7 +443,6 @@ const handleDelete = async (document) => {
     fetchDocumentList()
   } catch (error) {
     if (error !== 'cancel') {
-      console.error('删除文档失败:', error)
       ElMessage.error('删除文档失败')
     }
   }

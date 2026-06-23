@@ -13,10 +13,8 @@ from datetime import datetime
 import time
 import asyncio
 
-from internal.db.milvus import milvus_client
-from internal.rag.rag_service import rag_service
 from log import logger
-from pkg.constants.constants import MILVUS_COLLECTION_NAME, SUPPORTED_IMAGE_FORMATS
+from pkg.constants.constants import SUPPORTED_IMAGE_FORMATS
 from internal.monitor import record_performance
 
 # 导入模块化服务
@@ -48,22 +46,8 @@ class MessageService:
         if self._initialized:
             return
         
-        self._init_rag_service()
         self._initialized = True
         logger.info("✅ MessageService 初始化完成")
-    
-    def _init_rag_service(self):
-        """初始化 RAG 检索服务"""
-        try:
-            from pymilvus import connections
-            if not connections.has_connection("default"):
-                milvus_client.connect()
-            
-            rag_service.collection_name = MILVUS_COLLECTION_NAME
-            rag_service.initialize()
-            
-        except Exception as e:
-            logger.warning(f"RAG 服务初始化失败: {e}")
     
     # ==================== 公共接口 ====================
     

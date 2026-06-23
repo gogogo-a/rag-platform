@@ -6,7 +6,7 @@
 
 监控类型：
 - embedding: Embedding 向量化操作
-- milvus_search: Milvus 向量搜索
+- vector_search: 向量检索
 - llm_think: LLM 思考过程
 - llm_action: LLM 动作执行
 - llm_answer: LLM 答案生成
@@ -55,7 +55,7 @@ class PerformanceMonitor:
         例如: json_monitor/25_10_26_monitor/embedding.json
         
         Args:
-            monitor_type: 监控类型（embedding, milvus_search, llm_think 等）
+            monitor_type: 监控类型（embedding, vector_search, llm_think 等）
         
         Returns:
             Path: 文件路径
@@ -182,7 +182,7 @@ def performance_monitor(
     同步函数性能监控装饰器
     
     Args:
-        monitor_type: 监控类型（embedding, milvus_search, llm_think 等）
+        monitor_type: 监控类型（embedding, vector_search, llm_think 等）
         operation_name: 操作名称（默认使用函数名）
         include_args: 是否在元数据中包含函数参数
         include_result: 是否在元数据中包含返回值信息
@@ -288,7 +288,7 @@ def async_performance_monitor(
         include_result: 是否在元数据中包含返回值信息
     
     用法:
-        @async_performance_monitor('milvus_search', operation_name='向量检索')
+        @async_performance_monitor('vector_search', operation_name='向量检索')
         async def search_vectors(query_vector, top_k):
             ...
     """
@@ -413,8 +413,8 @@ class AsyncPerformanceTimer:
     异步性能计时器上下文管理器
     
     用法:
-        async with AsyncPerformanceTimer('milvus_search', '检索文档'):
-            results = await milvus.search(...)
+        async with AsyncPerformanceTimer('vector_search', '检索文档'):
+            results = await vector_store.search(...)
     """
     
     def __init__(self, monitor_type: str, operation: str, metadata: Optional[Dict] = None):
