@@ -13,6 +13,7 @@
 - MCP 自定义工具默认全部启用，不再受 `ENABLE_EXTRA_MCP_TOOLS` 限制。
 - 后续字段统一使用 `vector_id`，旧的 `milvus_id` 只作为兼容读取，不应继续新增。
 - 启动时只需要 MongoDB、Redis、Qdrant、MCP 等服务，不再需要 Milvus。
+- 当前 Qdrant 部署在服务器上，MongoDB 也部署在服务器上；本地没有对应服务时，不代表服务器环境不可用。
 - 旧 Milvus 数据不做自动迁移，如果需要旧数据，应走单独快照导入 Qdrant。
 - 页面和接口文案不要出现 Milvus，统一写“向量库”或 “Qdrant”。
 - 不要恢复 Milvus 文件、Docker 配置或工具限制开关。
@@ -67,6 +68,13 @@
   - MCP 工具默认全部加载，不再使用 `ENABLE_EXTRA_MCP_TOOLS`。
 
 ## 配置项
+
+当前部署环境：
+
+- Qdrant 在服务器上。
+- MongoDB 在服务器上。
+- 后端应通过环境变量连接服务器上的 Qdrant 和 MongoDB。
+- 本地开发机如果没有启动 Qdrant 或 MongoDB，不应据此判断服务器连接异常。
 
 `.env` / `env_template.txt` 中向量库配置为：
 
@@ -150,7 +158,7 @@ admin / 123456
 - `show_thinking=false` 已修正为真正的布尔值，不会再因为字符串 `"false"` 被 Python 当成真而强制输出思考、操作、观察事件。
 - 前端聊天面板本身保留思考、操作、观察渲染能力，是否展示取决于前端发送的 `show_thinking`。
 
-本地没有 Qdrant 时，登录和普通对话不应被 Qdrant 启动失败阻塞；服务器已配置 Qdrant 时按环境变量连接使用。
+本地没有 Qdrant 或 MongoDB 时，不代表服务器环境不可用；服务器上的 Qdrant 和 MongoDB 按环境变量连接使用。
 
 ## 注意事项
 
