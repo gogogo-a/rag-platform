@@ -1,5 +1,22 @@
 # AI 交接文档：Qdrant 向量库改造
 
+## 接手摘要
+
+这个项目已经从 Milvus 全面切到 Qdrant。后续 AI 或开发者接手时，不要再恢复 Milvus，也不要再引入 `pymilvus`、`langchain-milvus` 之类依赖。
+
+接手时按以下结论执行：
+
+- 向量库统一使用 Qdrant。
+- 文档上传、检索、删除、chunk 统计都走 Qdrant。
+- QA 相似问答缓存也走 Qdrant。
+- MCP 知识库搜索工具只调用 Qdrant。
+- MCP 自定义工具默认全部启用，不再受 `ENABLE_EXTRA_MCP_TOOLS` 限制。
+- 后续字段统一使用 `vector_id`，旧的 `milvus_id` 只作为兼容读取，不应继续新增。
+- 启动时只需要 MongoDB、Redis、Qdrant、MCP 等服务，不再需要 Milvus。
+- 旧 Milvus 数据不做自动迁移，如果需要旧数据，应走单独快照导入 Qdrant。
+- 页面和接口文案不要出现 Milvus，统一写“向量库”或 “Qdrant”。
+- 不要恢复 Milvus 文件、Docker 配置或工具限制开关。
+
 ## 当前目标
 
 本项目已从 Milvus 向量库切换为 Qdrant。后续接手时，默认不要再恢复 Milvus，也不要再引入 `pymilvus` 或 `langchain-milvus`。
@@ -116,6 +133,24 @@ cd web/plantform_vue && npm run build
 - Python compileall 通过。
 - Qdrant wrapper unittest 通过。
 - 前端 Vite build 通过，仅有 chunk 体积提示。
+
+## 登录与对话验证
+
+本地验证使用账号：
+
+```txt
+admin / 123456
+```
+
+已确认：
+
+- `/users/login` 能返回 `登录成功` 和 token。
+- 前端能进入 `/chat`，顶部显示 `admin`。
+- `/messages` 流式对话接口能创建会话、保存用户消息、返回 AI 回复、保存 AI 消息并发送 `done` 事件。
+- `show_thinking=false` 已修正为真正的布尔值，不会再因为字符串 `"false"` 被 Python 当成真而强制输出思考、操作、观察事件。
+- 前端聊天面板本身保留思考、操作、观察渲染能力，是否展示取决于前端发送的 `show_thinking`。
+
+本地没有 Qdrant 时，登录和普通对话不应被 Qdrant 启动失败阻塞；服务器已配置 Qdrant 时按环境变量连接使用。
 
 ## 注意事项
 
