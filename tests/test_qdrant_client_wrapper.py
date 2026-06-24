@@ -1,7 +1,9 @@
 import unittest
 import uuid
+from unittest.mock import patch
 
 from internal.db.qdrant import QdrantVectorClient
+from internal.rag.dedup import deduplicate_results
 
 
 class FakeCollections:
@@ -63,6 +65,70 @@ class QdrantVectorClientTest(unittest.TestCase):
         condition = selector.must[0]
         self.assertEqual(condition.key, "metadata.document_uuid")
         self.assertEqual(condition.match.value, "doc-1")
+
+
+class RagResultDeduplicationTest(unittest.TestCase):
+    def test_text_similar_chunks_are_deduplicated_even_when_scores_differ(self):
+        results = [
+            {
+                "text": "企业级 RAG 平台需要完成权限隔离、检索质量评估、工具调用链保存。 1001. 验收标准是回答可追溯。",
+                "metadata": {"document_uuid": "doc-1", "chunk_index": 1},
+                "vector_score": 0.91,
+            },
+            {
+                "text": "企业级 RAG 平台需要完成权限隔离、检索质量评估、工具调用链保存。 2048. 验收标准是回答可追溯。",
+                "metadata": {"document_uuid": "doc-1", "chunk_index": 2},
+                "vector_score": 0.86,
+            },
+            {
+                "text": "系统还需要提供用户登录、角色权限、会话管理和文档上传能力。",
+                "metadata": {"document_uuid": "doc-2", "chunk_index": 1},
+                "vector_score": 0.84,
+            },
+        ]
+
+        deduplicated = deduplicate_results(results, target_count=3)
+
+        self.assertEqual(len(deduplicated), 2)
+        self.assertEqual(deduplicated[0]["metadata"]["chunk_index"], 1)
+        self.assertEqual(deduplicated[1]["metadata"]["document_uuid"], "doc-2")
+
+    def test_mcp_search_uses_rag_deduplication_path(self):
+        from pkg.agent_tools_mcp import knowledge_search_mcp
+
+        deduplicated_results = [
+            {
+                "text": "去重后的文本块",
+                "metadata": {"filename": "方案.docx", "document_uuid": "doc-1"},
+                "vector_score": 0.9,
+            }
+        ]
+
+        def fake_search(query, top_k, use_reranker, user_permission):
+            return deduplicated_results
+
+        with patch.object(knowledge_search_mcp, "_get_rag_search", return_value=fake_search):
+            payload = knowledge_search_mcp._search_knowledge_base("RAG", 5, True, 0)
+
+        self.assertEqual(payload, deduplicated_results)
+
+    def test_same_score_different_text_chunks_are_kept(self):
+        results = [
+            {
+                "text": "企业级 RAG 平台需要权限隔离和检索质量评估。",
+                "metadata": {"document_uuid": "doc-1"},
+                "vector_score": 0.91,
+            },
+            {
+                "text": "系统还需要支持账号登录、角色管理和会话保存。",
+                "metadata": {"document_uuid": "doc-2"},
+                "vector_score": 0.90,
+            },
+        ]
+
+        deduplicated = deduplicate_results(results, target_count=2)
+
+        self.assertEqual(len(deduplicated), 2)
 
 
 if __name__ == "__main__":

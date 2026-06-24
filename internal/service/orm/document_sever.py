@@ -3,6 +3,7 @@
 处理文档的上传、查询、删除等业务
 """
 import uuid as uuid_module
+import hashlib
 from typing import Dict, Any, Optional
 from pathlib import Path
 from fastapi import UploadFile
@@ -22,6 +23,39 @@ class DocumentService:
         self.upload_dir = Path("uploads")
         self.upload_dir.mkdir(exist_ok=True)
         self.collection_name = QDRANT_COLLECTION_NAME
+
+    def _calculate_file_sha256(self, file_content: bytes) -> str:
+        return hashlib.sha256(file_content).hexdigest()
+
+    async def _find_existing_document_by_hash(self, file_sha256: str, permission: int):
+        if not file_sha256:
+            return None
+        docs = await DocumentModel.find({
+            "extra_data.file_sha256": file_sha256,
+            "permission": permission,
+            "status": {"$in": [1, 2]},
+        }).to_list()
+        return docs[0] if docs else None
+
+    def _build_duplicate_upload_response(self, existing_doc, original_filename: str) -> Dict[str, Any]:
+        chunk_count = self._get_saved_chunk_count(existing_doc)
+        return {
+            "uuid": existing_doc.uuid,
+            "name": existing_doc.name,
+            "size": existing_doc.size,
+            "page": existing_doc.page,
+            "url": existing_doc.url,
+            "content": "",
+            "content_length": 0,
+            "status": existing_doc.status,
+            "status_text": "处理中" if existing_doc.status == 1 else "处理完成",
+            "permission": existing_doc.permission,
+            "chunk_count": chunk_count,
+            "dedup_status": "duplicate",
+            "original_document_uuid": existing_doc.uuid,
+            "original_filename": original_filename,
+            "message": "文档已存在"
+        }
     
     async def upload_document(
         self,
@@ -44,7 +78,15 @@ class DocumentService:
         """
         try:
             from datetime import datetime
-            # 1. 生成唯一文件名（使用 UUID 确保唯一性）
+            # 1. 读取文件并检查重复上传
+            file_content = await file.read()
+            file_sha256 = self._calculate_file_sha256(file_content)
+            existing_doc = await self._find_existing_document_by_hash(file_sha256, permission)
+            if existing_doc:
+                data = self._build_duplicate_upload_response(existing_doc, file.filename)
+                return "文档已存在", 0, data
+
+            # 2. 生成唯一文件名（使用 UUID 确保唯一性）
             file_uuid = str(uuid_module.uuid4())  # 生成全局唯一标识符
             file_extension = Path(file.filename).suffix  # 保留原始文件扩展名
             new_filename = f"{file_uuid}{file_extension}"  # 格式：UUID.扩展名（如：a1b2c3d4-e5f6-7g8h-9i0j-k1l2m3n4o5p6.pdf）
@@ -52,15 +94,14 @@ class DocumentService:
             
             logger.info(f"生成唯一文件名: {file.filename} → {new_filename}")
             
-            # 2. 保存文件到服务器
-            file_content = await file.read()
+            # 3. 保存文件到服务器
             with open(file_path, "wb") as f:
                 f.write(file_content)
             
             file_size = len(file_content)
             logger.info(f"文件已保存: {file_path}, 大小: {file_size} bytes")
             
-            # 3. 保存文档信息到 MongoDB（初始状态：未处理）
+            # 4. 保存文档信息到 MongoDB（初始状态：未处理）
             upload_time = datetime.now()
             doc_model = DocumentModel(
                 uuid=file_uuid,
@@ -75,14 +116,17 @@ class DocumentService:
                     "uploader_id": uploader_id,
                     "uploader_name": uploader_name,
                     "upload_time": upload_time.isoformat(),
-                    "file_extension": file_extension
+                    "file_extension": file_extension,
+                    "file_sha256": file_sha256,
+                    "original_filename": file.filename,
+                    "dedup_status": "new"
                 }
             )
             await doc_model.insert()
             
             logger.info(f"文档已保存到 MongoDB: {file_uuid}, 状态: 未处理")
             
-            # 4. 提交到 Kafka 异步处理（Embedding）
+            # 5. 提交到 Kafka 异步处理（Embedding）
             task = {
                 "task_type": "file",
                 "file_path": str(file_path),
@@ -131,6 +175,7 @@ class DocumentService:
                 "status": 1,
                 "status_text": "处理中",
                 "permission": permission,  # 🔥 返回权限信息
+                "dedup_status": "new",
                 "message": "文档已提交处理，后台正在进行 Embedding"
             }
             return "上传成功", 0, data

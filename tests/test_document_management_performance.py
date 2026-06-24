@@ -190,6 +190,9 @@ class DocumentManagementPerformanceTest(unittest.TestCase):
             "success": True,
             "chunks_count": 3,
             "vectors_count": 3,
+            "raw_chunks_count": 4,
+            "deduped_chunks_count": 3,
+            "duplicate_chunks_removed": 1,
             "embedding_time": 0.1,
             "processing_time": 0.2,
             "start_datetime": "2026-06-23T10:00:00",
@@ -210,6 +213,9 @@ class DocumentManagementPerformanceTest(unittest.TestCase):
         self.assertEqual(kwargs["content"], "完整正文")
         self.assertEqual(kwargs["page"], 3)
         self.assertEqual(kwargs["extra_data_update"]["chunks_count"], 3)
+        self.assertEqual(kwargs["extra_data_update"]["raw_chunks_count"], 4)
+        self.assertEqual(kwargs["extra_data_update"]["deduped_chunks_count"], 3)
+        self.assertEqual(kwargs["extra_data_update"]["duplicate_chunks_removed"], 1)
 
     def test_kafka_common_config_is_applied_to_producer_and_consumer(self):
         with patch("internal.document_client.message_client.config") as fake_config, \

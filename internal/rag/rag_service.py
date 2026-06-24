@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 import logging
 
 from internal.db.qdrant import qdrant_client
+from internal.rag.dedup import deduplicate_results
 from internal.embedding.embedding_service import embedding_service
 from internal.reranker.reranker_service import reranker_service
 from internal.monitor import performance_monitor
@@ -37,21 +38,15 @@ class RAGService:
         self,
         results: List[Dict[str, Any]],
         score_diff_threshold: float = 0.02,
+        text_similarity_threshold: float = 0.88,
         target_count: int = 5,
     ) -> List[Dict[str, Any]]:
-        if not results:
-            return []
-        score_field = "rerank_score" if "rerank_score" in results[0] else "vector_score"
-        sorted_results = sorted(results, key=lambda x: x.get(score_field, 0), reverse=True)
-        deduplicated = []
-        for current in sorted_results:
-            current_score = current.get(score_field, 0)
-            if any(abs(current_score - selected.get(score_field, 0)) <= score_diff_threshold for selected in deduplicated):
-                continue
-            deduplicated.append(current)
-            if len(deduplicated) >= target_count:
-                break
-        return deduplicated
+        return deduplicate_results(
+            results=results,
+            score_diff_threshold=score_diff_threshold,
+            text_similarity_threshold=text_similarity_threshold,
+            target_count=target_count,
+        )
 
     @performance_monitor('vector_search', operation_name='向量检索+Rerank', include_args=True, include_result=True)
     def search(

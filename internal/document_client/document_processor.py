@@ -5,6 +5,7 @@
 """
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+import re
 from log import logger
 from internal.document_client.message_client import message_client
 from internal.document_client.config_loader import config
@@ -51,6 +52,25 @@ class DocumentProcessor:
             f"文档处理器已初始化 "
             f"(分块大小: {self.chunk_size}, 重叠: {self.chunk_overlap})"
         )
+
+    def _normalize_chunk_for_exact_dedup(self, text: str) -> str:
+        return re.sub(r"\s+", " ", text or "").strip()
+
+    def _deduplicate_exact_chunks(self, chunks: List[Dict[str, Any]]):
+        seen = set()
+        deduped = []
+        for chunk in chunks:
+            key = self._normalize_chunk_for_exact_dedup(chunk.get("content", ""))
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(chunk)
+        stats = {
+            "raw_chunks_count": len(chunks),
+            "deduped_chunks_count": len(deduped),
+            "duplicate_chunks_removed": len(chunks) - len(deduped),
+        }
+        return deduped, stats
     
     # ==================== 同步处理方法 ====================
     
@@ -116,7 +136,8 @@ class DocumentProcessor:
                     "message": "文档分割后没有生成文本块"
                 }
             
-            logger.info(f"文档分割完成: {len(chunks)} 个块")
+            chunks, dedup_stats = self._deduplicate_exact_chunks(chunks)
+            logger.info(f"文档分割完成: {dedup_stats['raw_chunks_count']} 个块，去重后: {len(chunks)} 个块")
             
             # 4. 批量 Embedding（记录时间）
             embedding_start_time = time.time()
@@ -199,7 +220,8 @@ class DocumentProcessor:
                     "embedding_time": round(embedding_duration, 2),  # 🔥 embedding时间（秒）
                     "processing_time": round(process_duration, 2),  # 🔥 总处理时间（秒）
                     "start_datetime": start_datetime.isoformat(),  # 🔥 开始时间
-                    "complete_datetime": complete_datetime.isoformat()  # 🔥 完成时间
+                    "complete_datetime": complete_datetime.isoformat(),  # 🔥 完成时间
+                    **dedup_stats
                 }
             else:
                 return {
@@ -248,13 +270,15 @@ class DocumentProcessor:
                     **(metadata or {})
                 }
             )
-            
+
             if not chunks:
                 return {
                     "success": False,
                     "message": "文本分割后没有生成文本块"
                 }
-            
+
+            chunks, dedup_stats = self._deduplicate_exact_chunks(chunks)
+
             # 2. 批量 Embedding（记录时间）
             embedding_start_time = time.time()
             texts = [chunk["content"] for chunk in chunks]
@@ -313,7 +337,8 @@ class DocumentProcessor:
                     "success": True,
                     "message": "处理成功",
                     "chunks_count": len(chunks),
-                    "vectors_count": len(embeddings)
+                    "vectors_count": len(embeddings),
+                    **dedup_stats
                 }
             else:
                 return {
@@ -503,7 +528,10 @@ class DocumentProcessor:
                     "processing_start_time": result.get('start_datetime'),
                     "processing_complete_time": result.get('complete_datetime'),
                     "vectors_count": result.get('vectors_count'),
-                    "chunks_count": chunks_count
+                    "chunks_count": chunks_count,
+                    "raw_chunks_count": result.get('raw_chunks_count', chunks_count),
+                    "deduped_chunks_count": result.get('deduped_chunks_count', chunks_count),
+                    "duplicate_chunks_removed": result.get('duplicate_chunks_removed', 0)
                 }
                 
                 self._update_document_status_sync(
