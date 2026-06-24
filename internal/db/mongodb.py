@@ -7,6 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
 from typing import Optional
 from pkg.constants.constants import MONGODB_URL, MONGODB_DATABASE
+from pkg.middleware.database_logger import install_database_return_logger
 
 class MongoDB:
     """MongoDB 配置类（单例模式）"""
@@ -76,6 +77,7 @@ class MongoDB:
             print(f"✓ Beanie ODM 初始化成功！")
             print(f"✓ 数据库: {database_name}")
             print(f"✓ 集合: documents, message, user_info, session, thought_chains, chunks, qa_caches, evaluations, benchmarks")
+            install_database_return_logger()
             
             # 标记为已初始化
             self._initialized = True

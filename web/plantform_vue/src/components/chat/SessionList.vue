@@ -26,14 +26,19 @@
       <div v-else class="session-items">
         <div
           v-for="session in sessionList"
-          :key="session.uuid || session.id"
+          :key="getSessionId(session)"
           class="session-item"
-          :class="{ active: (session.uuid || session.id) === chatStore.currentSessionId }"
+          :class="{ active: isActiveSession(session) }"
+          role="button"
+          tabindex="0"
+          @click="handleSelectSession(session)"
+          @keydown.enter.prevent="handleSelectSession(session)"
+          @keydown.space.prevent="handleSelectSession(session)"
         >
-          <div class="session-icon" @click="handleSelectSession(session.uuid || session.id)">
+          <div class="session-icon">
             <el-icon><ChatDotRound /></el-icon>
           </div>
-          <div class="session-info" @click="handleSelectSession(session.uuid || session.id)">
+          <div class="session-info">
             <div class="session-name">{{ session.name || session.session_name || '新会话' }}</div>
             <div class="session-last-message">{{ session.last_message || '暂无消息' }}</div>
           </div>
@@ -86,14 +91,13 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { useUserStore, useChatStore } from '@/store'
+import { useChatStore } from '@/store'
 import { Plus, ChatDotRound, More, Edit, Delete } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import LoadingSpinner from '@/components/public/LoadingSpinner.vue'
 import EmptyState from '@/components/public/EmptyState.vue'
 import { updateSession, deleteSession } from '@/api/session'
 
-const userStore = useUserStore()
 const chatStore = useChatStore()
 
 const sessionList = computed(() => chatStore.sessionList)
@@ -130,9 +134,23 @@ const formatTime = (timestamp) => {
   return `${date.getMonth() + 1}/${date.getDate()}`
 }
 
+const getSessionId = (session) => {
+  return String(session?.uuid || session?.id || '')
+}
+
+const isActiveSession = (session) => {
+  return getSessionId(session) === String(chatStore.currentSessionId || '')
+}
+
 // 选择会话
-const handleSelectSession = (sessionId) => {
-  chatStore.switchSession(sessionId)
+const handleSelectSession = async (session) => {
+  const sessionId = getSessionId(session)
+  if (!sessionId || sessionId === String(chatStore.currentSessionId || '')) return
+
+  const result = await chatStore.switchSession(sessionId)
+  if (result && result.success === false) {
+    ElMessage.error('会话加载失败，请重试')
+  }
 }
 
 // 创建新会话
@@ -144,7 +162,7 @@ const handleNewSession = () => {
 
 // 处理会话操作
 const handleSessionAction = (command, session) => {
-  const sessionId = session.uuid || session.id
+  const sessionId = getSessionId(session)
   
   if (command === 'rename') {
     // 重命名会话
@@ -162,7 +180,7 @@ const handleSessionAction = (command, session) => {
 
 // 删除会话
 const handleDeleteSession = async (session) => {
-  const sessionId = session.uuid || session.id
+  const sessionId = getSessionId(session)
   const sessionName = session.name || session.session_name || '新会话'
   
   try {
@@ -210,7 +228,7 @@ const handleRenameSession = async () => {
     
     // 更新本地会话列表
     const session = sessionList.value.find(
-      s => (s.uuid || s.id) === renameForm.value.sessionId
+      s => getSessionId(s) === String(renameForm.value.sessionId || '')
     )
     if (session) {
       session.name = renameForm.value.name.trim()
@@ -385,4 +403,3 @@ const handleRenameSession = async () => {
   color: var(--text-secondary) !important;
 }
 </style>
-

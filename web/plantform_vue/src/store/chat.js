@@ -4,6 +4,12 @@
 
 import { defineStore } from 'pinia'
 import { getSessionList, getMessageList } from '@/api'
+import {
+  DEFAULT_MESSAGE_PAGE_SIZE,
+  getInitialMessagePage,
+  getOlderMessagePage,
+  normalizeChatMessages
+} from './chatPagination'
 
 export const useChatStore = defineStore('chat', {
   state: () => ({
@@ -15,13 +21,19 @@ export const useChatStore = defineStore('chat', {
     currentMessages: [],
     // 是否正在加载
     loading: false,
+    messagesLoading: false,
+    olderMessagesLoading: false,
+    currentMessagePage: 1,
+    messagePageSize: DEFAULT_MESSAGE_PAGE_SIZE,
+    totalMessages: 0,
+    hasOlderMessages: false,
     showThinking: true
   }),
 
   getters: {
     // 当前会话对象
     currentSession: (state) => {
-      return state.sessionList.find(s => (s.uuid || s.id) === state.currentSessionId) || null
+      return state.sessionList.find(s => String(s.uuid || s.id || '') === String(state.currentSessionId || '')) || null
     },
     
     // 消息总数
@@ -47,7 +59,6 @@ export const useChatStore = defineStore('chat', {
         
         return { success: true, data }
       } catch (error) {
-        console.error('获取会话列表失败:', error)
         return { success: false, error }
       } finally {
         this.loading = false
@@ -57,65 +68,40 @@ export const useChatStore = defineStore('chat', {
     /**
      * 获取当前会话的消息列表
      */
-    async fetchMessages(sessionId, page = 1, pageSize = 100) {
-      if (!sessionId) return
+    async fetchMessages(sessionId, page = 1, pageSize = this.messagePageSize, options = {}) {
+      const targetSessionId = String(sessionId || '')
+      if (!targetSessionId) return { success: false, error: new Error('会话不存在') }
+      const appendMode = options.mode === 'prepend'
       
       try {
-        this.loading = true
-        const data = await getMessageList(sessionId, {
+        if (appendMode) {
+          this.olderMessagesLoading = true
+        } else {
+          this.messagesLoading = true
+        }
+
+        const data = await getMessageList(targetSessionId, {
           page,
           page_size: pageSize
         })
         
-        // 处理消息，将 extra_data 中的数据提取到顶层
-        const messages = (data.messages || [])
-          // 🔥 过滤掉系统总结消息（send_type === 2）
-          .filter(msg => msg.send_type !== 2)
-          .map(msg => {
-          // 转换消息角色
-          const role = msg.send_type === 0 ? 'user' : 'assistant'
-          
-          // 构建基础消息对象
-          const processedMsg = {
-            ...msg,
-            role,
-            create_at: msg.send_at || msg.created_at
-          }
-          
-          // 如果有 extra_data，提取其中的数据
-          if (msg.extra_data) {
-            // 思考过程 - 合并数组为字符串
-            if (msg.extra_data.thoughts && msg.extra_data.thoughts.length > 0) {
-              processedMsg.thinking = msg.extra_data.thoughts.join('\n\n')
-            }
-            
-            // 操作过程 - 合并数组为字符串
-            if (msg.extra_data.actions && msg.extra_data.actions.length > 0) {
-              processedMsg.action = msg.extra_data.actions.join('\n\n')
-            }
-            
-            // 观察结果 - 合并数组为字符串
-            if (msg.extra_data.observations && msg.extra_data.observations.length > 0) {
-              processedMsg.observation = msg.extra_data.observations.join('\n\n')
-            }
-            
-            // 文档列表 - 保持数组格式
-            if (msg.extra_data.documents && msg.extra_data.documents.length > 0) {
-              processedMsg.documents = msg.extra_data.documents
-            }
-          }
-          
-          return processedMsg
-        })
+        const messages = normalizeChatMessages(data.messages || [])
         
-        this.currentMessages = messages
+        if (String(this.currentSessionId || '') === targetSessionId) {
+          this.currentMessagePage = page
+          this.totalMessages = Number(data.total || 0)
+          this.hasOlderMessages = page > 1
+          this.currentMessages = appendMode
+            ? [...messages, ...this.currentMessages]
+            : messages
+        }
         
         return { success: true, data }
       } catch (error) {
-        console.error('获取消息列表失败:', error)
         return { success: false, error }
       } finally {
-        this.loading = false
+        this.messagesLoading = false
+        this.olderMessagesLoading = false
       }
     },
 
@@ -123,18 +109,72 @@ export const useChatStore = defineStore('chat', {
      * 切换当前会话
      */
     async switchSession(sessionId) {
-      this.currentSessionId = sessionId
+      const nextSessionId = String(sessionId || '')
+      if (!nextSessionId) {
+        return { success: false, error: new Error('会话不存在') }
+      }
+
+      this.currentSessionId = nextSessionId
       this.currentMessages = []
-      await this.fetchMessages(sessionId)
+      this.currentMessagePage = 1
+      this.totalMessages = 0
+      this.hasOlderMessages = false
+
+      try {
+        this.messagesLoading = true
+        const firstPage = await getMessageList(nextSessionId, {
+          page: 1,
+          page_size: this.messagePageSize
+        })
+        const lastPage = getInitialMessagePage(firstPage.total, this.messagePageSize)
+        const targetPageData = lastPage === 1
+          ? firstPage
+          : await getMessageList(nextSessionId, {
+            page: lastPage,
+            page_size: this.messagePageSize
+          })
+
+        if (String(this.currentSessionId || '') === nextSessionId) {
+          this.currentMessagePage = lastPage
+          this.totalMessages = Number(targetPageData.total || firstPage.total || 0)
+          this.hasOlderMessages = lastPage > 1
+          this.currentMessages = normalizeChatMessages(targetPageData.messages || [])
+        }
+
+        return { success: true, data: targetPageData }
+      } catch (error) {
+        return { success: false, error }
+      } finally {
+        this.messagesLoading = false
+      }
+    },
+
+    async loadOlderMessages() {
+      if (!this.currentSessionId || this.olderMessagesLoading || this.messagesLoading || !this.hasOlderMessages) {
+        return { success: false }
+      }
+
+      const olderPage = getOlderMessagePage(this.currentMessagePage)
+      if (!olderPage) {
+        this.hasOlderMessages = false
+        return { success: false }
+      }
+
+      return await this.fetchMessages(
+        this.currentSessionId,
+        olderPage,
+        this.messagePageSize,
+        { mode: 'prepend' }
+      )
     },
 
     /**
      * 添加新会话到列表
      */
     addSession(session) {
-      const sessionId = session.uuid || session.id
+      const sessionId = String(session.uuid || session.id || '')
       // 检查是否已存在
-      const exists = this.sessionList.find(s => (s.uuid || s.id) === sessionId)
+      const exists = this.sessionList.find(s => String(s.uuid || s.id || '') === sessionId)
       if (!exists) {
         this.sessionList.unshift(session)
       }
@@ -145,7 +185,8 @@ export const useChatStore = defineStore('chat', {
      * 从列表中移除会话
      */
     removeSession(sessionId) {
-      const index = this.sessionList.findIndex(s => (s.uuid || s.id) === sessionId)
+      const targetSessionId = String(sessionId || '')
+      const index = this.sessionList.findIndex(s => String(s.uuid || s.id || '') === targetSessionId)
       if (index !== -1) {
         this.sessionList.splice(index, 1)
       }
@@ -173,6 +214,9 @@ export const useChatStore = defineStore('chat', {
      */
     clearCurrentMessages() {
       this.currentMessages = []
+      this.currentMessagePage = 1
+      this.totalMessages = 0
+      this.hasOlderMessages = false
     },
 
     toggleShowThinking() {
@@ -187,6 +231,11 @@ export const useChatStore = defineStore('chat', {
       this.currentSessionId = ''
       this.currentMessages = []
       this.loading = false
+      this.messagesLoading = false
+      this.olderMessagesLoading = false
+      this.currentMessagePage = 1
+      this.totalMessages = 0
+      this.hasOlderMessages = false
     }
   }
 })

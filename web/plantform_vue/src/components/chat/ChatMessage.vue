@@ -14,7 +14,7 @@
 
       <div class="message-body">
         <!-- 思考过程 -->
-        <div v-if="!isUser && message.thinking" class="thinking-process">
+        <div v-if="showThinking && !isUser && message.thinking" class="thinking-process">
           <div 
             class="thinking-header" 
             :class="{ 'is-active': isThinkingExpanded }"
@@ -32,7 +32,7 @@
         </div>
 
         <!-- 观察结果 -->
-        <div v-if="!isUser && message.observation" class="observation-process">
+        <div v-if="showThinking && !isUser && message.observation" class="observation-process">
           <div 
             class="observation-header" 
             :class="{ 'is-active': isObservationExpanded }"
@@ -58,7 +58,7 @@
         </div>
 
         <!-- 操作过程 -->
-        <div v-if="!isUser && message.action" class="action-process">
+        <div v-if="showThinking && !isUser && message.action" class="action-process">
           <div 
             class="action-header" 
             :class="{ 'is-active': isActionExpanded }"
@@ -246,7 +246,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { useUserStore } from '@/store'
+import { useUserStore, useChatStore } from '@/store'
 import { User, Service, CopyDocument, RefreshRight, ArrowDown, MagicStick, Tools, View, Document, DocumentCopy, Right, Picture, Download, Star, StarFilled, CircleClose, CircleCloseFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { submitFeedback } from '@/api/message'
@@ -265,8 +265,10 @@ const props = defineProps({
 const emit = defineEmits(['regenerate'])
 const router = useRouter()
 const userStore = useUserStore()
+const chatStore = useChatStore()
 
 const isUser = props.message.role === 'user'
+const showThinking = computed(() => chatStore.showThinking)
 const isThinkingExpanded = ref(false)
 const isObservationExpanded = ref(false)
 const isActionExpanded = ref(false)
@@ -444,7 +446,6 @@ const handleDownloadFile = async () => {
     // 只在成功下载后显示一次提示
     ElMessage.success('下载成功')
   } catch (error) {
-    console.error('下载文件失败:', error)
     ElMessage.error('下载失败: ' + error.message)
   } finally {
     // 释放下载锁
@@ -492,7 +493,6 @@ const handleCopy = async () => {
     await navigator.clipboard.writeText(props.message.content)
     ElMessage.success('已复制到剪贴板')
   } catch (error) {
-    console.error('复制失败:', error)
     ElMessage.error('复制失败')
   }
 }
@@ -537,7 +537,6 @@ const handleLike = async () => {
     dislikeActive.value = false
     ElMessage.success('感谢您的反馈！')
   } catch (error) {
-    console.error('点赞失败:', error)
     // 如果是重复操作，显示提示
     if (error.message?.includes('已经提交过')) {
       ElMessage.info('您已经点过赞了')
@@ -576,7 +575,6 @@ const handleDislike = async () => {
       ElMessage.success('感谢您的反馈！')
     }
   } catch (error) {
-    console.error('踩失败:', error)
     // 如果是重复操作，显示提示
     if (error.message?.includes('已经提交过')) {
       ElMessage.info('您已经反馈过了')
@@ -591,8 +589,8 @@ const handleDislike = async () => {
 <style scoped>
 .chat-message {
   display: flex;
-  gap: 12px;
-  padding: 16px;
+  gap: 10px;
+  padding: 10px 12px;
   animation: slideInUp 0.3s ease-out;
 }
 
@@ -624,8 +622,8 @@ const handleDislike = async () => {
 .message-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
+  gap: 8px;
+  margin-bottom: 5px;
 }
 
 .message-sender {
@@ -640,15 +638,15 @@ const handleDislike = async () => {
 }
 
 .message-body {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .thinking-process {
   background: rgba(168, 85, 247, 0.1);
   border-left: 3px solid var(--neon-purple);
-  padding: 8px;
-  border-radius: 8px;
-  margin-bottom: 12px;
+  padding: 5px;
+  border-radius: 7px;
+  margin-bottom: 8px;
 }
 
 .thinking-header {
@@ -661,7 +659,7 @@ const handleDislike = async () => {
   cursor: pointer;
   user-select: none;
   transition: all 0.3s ease;
-  padding: 8px 12px;
+  padding: 6px 10px;
   border-radius: 6px;
   background: transparent;
 }
@@ -691,10 +689,10 @@ const handleDislike = async () => {
 .thinking-content {
   font-size: 13px;
   color: var(--text-secondary);
-  line-height: 1.6;
+  line-height: 1.5;
   margin-top: 4px;
-  padding: 4px 12px;
-  max-height: 260px;
+  padding: 4px 10px;
+  max-height: 220px;
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -725,9 +723,9 @@ const handleDislike = async () => {
 .action-process {
   background: rgba(59, 130, 246, 0.1);
   border-left: 3px solid var(--neon-blue);
-  padding: 8px;
-  border-radius: 8px;
-  margin-bottom: 12px;
+  padding: 5px;
+  border-radius: 7px;
+  margin-bottom: 8px;
 }
 
 .action-header {
@@ -740,7 +738,7 @@ const handleDislike = async () => {
   cursor: pointer;
   user-select: none;
   transition: all 0.3s ease;
-  padding: 8px 12px;
+  padding: 6px 10px;
   border-radius: 6px;
   background: transparent;
 }
@@ -760,11 +758,11 @@ const handleDislike = async () => {
 .action-content {
   font-size: 13px;
   color: var(--text-secondary);
-  line-height: 1.6;
+  line-height: 1.5;
   margin-top: 4px;
-  padding: 4px 12px;
+  padding: 4px 10px;
   font-family: 'Courier New', monospace;
-  max-height: 260px;
+  max-height: 220px;
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -795,9 +793,9 @@ const handleDislike = async () => {
 .observation-process {
   background: rgba(16, 185, 129, 0.1);
   border-left: 3px solid #10b981;
-  padding: 8px;
-  border-radius: 8px;
-  margin-bottom: 12px;
+  padding: 5px;
+  border-radius: 7px;
+  margin-bottom: 8px;
 }
 
 .observation-header {
@@ -810,7 +808,7 @@ const handleDislike = async () => {
   cursor: pointer;
   user-select: none;
   transition: all 0.3s ease;
-  padding: 8px 12px;
+  padding: 6px 10px;
   border-radius: 6px;
   background: transparent;
 }
@@ -830,11 +828,11 @@ const handleDislike = async () => {
 .observation-content {
   font-size: 13px;
   color: var(--text-secondary);
-  line-height: 1.6;
+  line-height: 1.5;
   margin-top: 4px;
-  padding: 4px 12px;
+  padding: 4px 10px;
   white-space: pre-wrap;
-  max-height: 260px;
+  max-height: 220px;
   overflow-y: auto;
   word-break: break-word;
 }
@@ -878,7 +876,7 @@ const handleDislike = async () => {
 
 /* 用户上传的文件样式 */
 .uploaded-file {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .uploaded-file-card {
@@ -975,7 +973,7 @@ const handleDislike = async () => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 14px;
+  padding: 9px 12px;
 }
 
 .file-header .file-icon {
@@ -1094,8 +1092,8 @@ const handleDislike = async () => {
 }
 
 .documents-list {
-  margin-top: 16px;
-  padding: 12px;
+  margin-top: 10px;
+  padding: 10px;
   background: rgba(99, 102, 241, 0.05);
   border: 1px solid rgba(99, 102, 241, 0.2);
   border-radius: 8px;
@@ -1108,7 +1106,7 @@ const handleDislike = async () => {
   font-size: 13px;
   font-weight: 600;
   color: var(--primary-color);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .documents-icon {
@@ -1118,14 +1116,14 @@ const handleDislike = async () => {
 .documents-items {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .document-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 7px 10px;
   background: rgba(99, 102, 241, 0.05);
   border: 1px solid rgba(99, 102, 241, 0.1);
   border-radius: 6px;
@@ -1169,7 +1167,7 @@ const handleDislike = async () => {
 .message-text {
   font-size: 14px;
   color: var(--text-primary);
-  line-height: 1.8;
+  line-height: 1.65;
   word-wrap: break-word;
 }
 
@@ -1209,7 +1207,8 @@ const handleDislike = async () => {
 
 .message-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
+  margin-top: 2px;
   opacity: 0;
   transition: opacity 0.3s ease;
 }

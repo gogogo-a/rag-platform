@@ -102,11 +102,11 @@ class FakeDocumentModel:
         return len(cls.docs)
 
     @classmethod
-    def find_all(cls):
+    def find_all(cls, *args, **kwargs):
         return FakeFindQuery(list(cls.docs))
 
     @classmethod
-    def find(cls, query):
+    def find(cls, query=None, *args, **kwargs):
         return FakeFindQuery(list(cls.docs))
 
     @classmethod
@@ -245,6 +245,38 @@ class DocumentManagementPerformanceTest(unittest.TestCase):
         self.assertEqual(kwargs["producer_config"]["acks"], "all")
         self.assertEqual(kwargs["consumer_config"]["group_id"], "brainwave_embedding_group")
         self.assertIs(client.client, get_kafka_client.return_value)
+
+    def test_rag_evaluation_consumer_uses_dedicated_group(self):
+        with patch("internal.document_client.message_client.config") as fake_config, \
+             patch("internal.document_client.message_client.get_kafka_client"):
+            fake_config.message_mode = "kafka"
+            fake_config.kafka_config = {
+                "bootstrap_servers": ["8.140.245.242:9092"],
+                "api_version": [4, 3],
+                "consumer": {
+                    "group_id": "brainwave_embedding_group",
+                    "auto_offset_reset": "latest",
+                },
+                "consumer_groups": {
+                    "rag_evaluation": "brainwave_ragas_group",
+                },
+            }
+            fake_config.get.side_effect = lambda key, default=None: {
+                "kafka.consumer.group_id": "brainwave_embedding_group",
+                "kafka.consumer_groups.rag_evaluation": "brainwave_ragas_group",
+            }.get(key, default)
+
+            client = MessageClient()
+            client.start_consumer(
+                handler=lambda message: None,
+                topic="rag_evaluation",
+            )
+
+            client.client.start_consumer.assert_called_once()
+            self.assertEqual(
+                client.client.start_consumer.call_args.kwargs["consumer_group"],
+                "brainwave_ragas_group",
+            )
 
 
 if __name__ == "__main__":

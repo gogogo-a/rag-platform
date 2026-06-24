@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from .routes import setup_routes
 from pkg.middleware.auth import JWTAuthMiddleware
+from pkg.middleware.response_logger import ReturnLoggingMiddleware
 from log import logger
 import os
 
@@ -39,6 +40,9 @@ def create_app() -> FastAPI:
     # 全局应用JWT认证，白名单路径除外
     app.add_middleware(JWTAuthMiddleware)
     logger.info("✓ JWT 认证中间件已全局应用")
+
+    app.add_middleware(ReturnLoggingMiddleware)
+    logger.info("✓ 返回日志中间件已全局应用")
     
     # ==================== 注册路由 ====================
     setup_routes(app)

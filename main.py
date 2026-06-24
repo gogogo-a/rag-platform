@@ -4,6 +4,8 @@
 使用 Beanie ODM 进行 MongoDB 对象映射
 """
 import uvicorn
+import asyncio
+import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from internal.db.mongodb import init_mongodb, close_mongodb
@@ -13,9 +15,26 @@ from internal.document_client.document_processor import document_processor
 from internal.service.evaluation.rag_evaluation_consumer import start_rag_evaluation_consumer
 from internal.http_sever.app import create_app
 from internal.monitor import start_resource_monitoring, stop_resource_monitoring
+from internal.embedding.embedding_service import embedding_service
+from internal.reranker.reranker_service import reranker_service
 from pkg.agent_tools_mcp import mcp_manager  # 🔥 导入 MCP 管理器
 from pkg.constants.constants import QDRANT_COLLECTION_NAME, QDRANT_QA_COLLECTION_NAME, VECTOR_DIMENSION
 from log import logger
+
+
+async def preload_models():
+    """启动阶段加载检索模型，避免首次请求触发冷加载。"""
+    logger.info("🧠 正在预加载检索模型...")
+    start_time = time.time()
+
+    await asyncio.to_thread(embedding_service.load_model)
+
+    try:
+        await asyncio.to_thread(reranker_service.load_model)
+    except Exception as e:
+        logger.warning(f"Reranker 模型预加载失败，将在检索时降级处理: {e}")
+
+    logger.info(f"✓ 检索模型预加载完成，耗时: {time.time() - start_time:.2f}秒")
 
 
 @asynccontextmanager
@@ -61,11 +80,11 @@ async def lifespan(app: FastAPI):
         logger.info("📋 正在启动 RAGAS 评估队列...")
         start_rag_evaluation_consumer()
         logger.info("✓ RAGAS 评估队列已启动")
+
+        start_resource_monitoring(interval=60)
         
-        # ==================== 启动资源监控 ====================
-        logger.info("📊 正在启动资源监控...")
-        start_resource_monitoring(interval=60)  # 每 60 秒监控一次
-        logger.info("✓ 资源监控已启动（CPU、内存、GPU、MongoDB）")
+        # ==================== 预加载检索模型 ====================
+        await preload_models()
         
         # ==================== 启动 MCP 服务 ====================
         logger.info("🔌 正在启动 MCP 工具服务...")
@@ -106,7 +125,6 @@ async def lifespan(app: FastAPI):
         
         try:
             stop_resource_monitoring()
-            logger.info("✓ 资源监控已停止")
         except Exception as e:
             logger.error(f"停止资源监控失败: {e}")
         

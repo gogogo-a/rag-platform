@@ -15,7 +15,6 @@ export const useUserStore = defineStore('user', {
         userInfo = JSON.parse(storedUserInfo)
       }
     } catch (e) {
-      console.warn('解析 userInfo 失败:', e)
       localStorage.removeItem('userInfo')
     }
 
@@ -58,7 +57,6 @@ export const useUserStore = defineStore('user', {
         
         return { success: true, data }
       } catch (error) {
-        console.error('登录失败:', error)
         return { success: false, error }
       }
     },
@@ -83,7 +81,6 @@ export const useUserStore = defineStore('user', {
         
         return { success: true, data }
       } catch (error) {
-        console.error('邮箱登录失败:', error)
         return { success: false, error }
       }
     },
@@ -100,7 +97,6 @@ export const useUserStore = defineStore('user', {
         this.userInfo = data
         localStorage.setItem('userInfo', JSON.stringify(data))
       } catch (error) {
-        console.error('刷新用户信息失败:', error)
       }
     },
 
@@ -117,4 +113,3 @@ export const useUserStore = defineStore('user', {
     }
   }
 })
-

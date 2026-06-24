@@ -140,7 +140,10 @@ class MessageClient:
                     # 使用默认主题
                     topic = config.get('kafka.topics.document_embedding', 'document_embedding')
                 
-                consumer_group = config.get('kafka.consumer.group_id', 'brainwave_embedding_group')
+                consumer_group = config.get(
+                    f'kafka.consumer_groups.{topic}',
+                    config.get('kafka.consumer.group_id', 'brainwave_embedding_group')
+                )
                 
                 self.client.start_consumer(
                     topic=topic,

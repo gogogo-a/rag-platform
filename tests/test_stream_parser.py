@@ -155,6 +155,22 @@ class StreamParserTest(unittest.TestCase):
             [result for result in results if result and result["event"] == "answer_chunk"],
         )
 
+    def test_plain_answer_without_react_markers_streams_as_answer_chunks(self):
+        parser = StreamParser()
+
+        results = [
+            parser.parse_chunk("你好，"),
+            parser.parse_chunk("可以直接回答。"),
+        ]
+
+        self.assertEqual(
+            [
+                {"event": "answer_chunk", "content": "你好，"},
+                {"event": "answer_chunk", "content": "可以直接回答。"},
+            ],
+            [result for result in results if result],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

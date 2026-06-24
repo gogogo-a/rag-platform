@@ -25,6 +25,20 @@ from typing import Dict, Any
 app = FastMCP("knowledge_search")
 
 
+def _preload_search_models():
+    try:
+        from internal.embedding.embedding_service import embedding_service
+        from internal.reranker.reranker_service import reranker_service
+
+        embedding_service.load_model()
+        try:
+            reranker_service.load_model()
+        except Exception as exc:
+            logging.warning("Reranker 模型预加载失败，将在检索时降级处理: %s", exc)
+    except Exception as exc:
+        logging.warning("知识库检索模型预加载失败: %s", exc)
+
+
 def _get_rag_search():
     from internal.rag.rag_service import rag_service
 
@@ -123,4 +137,5 @@ def knowledge_search(
 
 
 if __name__ == "__main__":
+    _preload_search_models()
     app.run(transport="stdio")

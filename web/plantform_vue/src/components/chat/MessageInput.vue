@@ -16,16 +16,18 @@
     </div>
 
     <div class="input-toolbar">
-      <el-button
-        text
-        :icon="showThinking ? View : Hide"
-        @click="handleToggleThinking"
-        size="small"
-        :class="{ 'thinking-active': showThinking }"
-        class="thinking-button"
-      >
-        {{ showThinking ? '显示' : '隐藏' }}过程
-      </el-button>
+      <el-tooltip :content="showThinking ? '隐藏过程' : '显示过程'" placement="top">
+        <el-button
+          text
+          :icon="showThinking ? View : Hide"
+          @click="handleToggleThinking"
+          size="small"
+          :class="{ 'thinking-active': showThinking }"
+          class="thinking-button"
+        >
+          {{ showThinking ? '隐藏过程' : '显示过程' }}
+        </el-button>
+      </el-tooltip>
 
       <el-button text :icon="Upload" size="small" @click="handleSelectFile">
         上传文件
@@ -37,8 +39,6 @@
         style="display: none"
         @change="handleFileChange"
       />
-      
-      <span class="toolbar-hint">支持粘贴图片 (Ctrl+V) 和拖拽文件</span>
     </div>
 
     <div class="input-container">
@@ -46,8 +46,8 @@
         ref="textareaRef"
         v-model="inputMessage"
         type="textarea"
-        :rows="3"
-        placeholder="输入您的问题... (Shift + Enter 换行，Enter 发送，Ctrl+V 粘贴图片)"
+        :rows="2"
+        placeholder="输入您的问题..."
         :disabled="isSending"
         @keydown.enter="handleKeyDown"
         @compositionstart="handleCompositionStart"
@@ -347,7 +347,7 @@ defineExpose({
   position: relative;
   background: var(--bg-secondary);
   border-top: 1px solid var(--border-color);
-  padding: 16px;
+  padding: 8px 14px 10px;
   transition: all 0.3s ease;
 }
 
@@ -421,21 +421,14 @@ defineExpose({
 .input-toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.toolbar-hint {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--text-tertiary);
-  opacity: 0.7;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .thinking-button {
   transition: all 0.3s ease;
-  padding: 8px 16px;
-  border-radius: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
 }
 
 .thinking-button.thinking-active {
@@ -449,7 +442,7 @@ defineExpose({
 
 .input-container {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   align-items: flex-end;
 }
 
@@ -461,9 +454,10 @@ defineExpose({
   background: var(--bg-tertiary);
   border-color: var(--border-color);
   color: var(--text-primary);
-  border-radius: 12px;
+  border-radius: 10px;
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.5;
+  min-height: 54px !important;
   resize: none;
   transition: all 0.3s ease;
 }
@@ -474,9 +468,9 @@ defineExpose({
 }
 
 .send-button {
-  height: 48px;
-  padding: 0 32px;
-  border-radius: 24px;
+  height: 42px;
+  padding: 0 24px;
+  border-radius: 21px;
   font-weight: 600;
   background: linear-gradient(135deg, var(--neon-purple), var(--neon-blue));
   border: none;
@@ -494,7 +488,7 @@ defineExpose({
 }
 
 .uploaded-files {
-  margin-top: 12px;
+  margin-top: 8px;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -504,7 +498,7 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 6px 10px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
   border-radius: 8px;

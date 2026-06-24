@@ -47,7 +47,6 @@ const showHeader = computed(() => {
 .main-content {
   flex: 1;
   overflow: hidden;
-  margin-top: 64px;
 }
 
 .main-content.no-header {

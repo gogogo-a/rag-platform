@@ -91,8 +91,14 @@
       </el-drawer>
 
       <div class="chat-messages" ref="messagesContainer" @scroll="handleScroll">
+        <LoadingSpinner
+          v-if="chatStore.messagesLoading"
+          text="正在加载会话..."
+          class="messages-loading"
+        />
+
         <EmptyState
-          v-if="!chatStore.loading && chatStore.currentMessages.length === 0"
+          v-else-if="!chatStore.loading && chatStore.currentMessages.length === 0"
           :icon="ChatDotRound"
           text="开始新的对话"
           subtext="向 AI 助手提问，获取智能答案"
@@ -134,6 +140,7 @@ import SessionList from '@/components/chat/SessionList.vue'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import MessageInput from '@/components/chat/MessageInput.vue'
 import EmptyState from '@/components/public/EmptyState.vue'
+import LoadingSpinner from '@/components/public/LoadingSpinner.vue'
 
 // 定义组件名，用于 keep-alive
 defineOptions({
@@ -153,6 +160,8 @@ const contextUsage = ref(null)
 
 const userScrollAttempts = ref(0) // 用户尝试滚动的次数
 const allowFreeScroll = ref(false) // 是否允许自由滚动
+const preserveScrollAfterPrepend = ref(null)
+const shouldScrollAfterSessionLoad = ref(false)
 
 const canViewContextUsage = computed(() => userStore.userInfo?.is_admin === 1)
 
@@ -221,12 +230,41 @@ const scrollToBottom = (force = false) => {
   })
 }
 
+const restoreScrollAfterPrepend = () => {
+  nextTick(() => {
+    const container = messagesContainer.value
+    const previous = preserveScrollAfterPrepend.value
+    if (!container || !previous) return
+
+    container.scrollTop = container.scrollHeight - previous.scrollHeight + previous.scrollTop
+    preserveScrollAfterPrepend.value = null
+  })
+}
+
 // 处理用户滚动事件
 const handleScroll = (event) => {
-  if (!isStreaming.value) return
-  
   const container = messagesContainer.value
   if (!container) return
+
+  if (!isStreaming.value) {
+    const scrollableHeight = container.scrollHeight - container.clientHeight
+    if (scrollableHeight <= 0) return
+
+    const scrollRatio = container.scrollTop / scrollableHeight
+    if (
+      scrollRatio <= 0.3 &&
+      chatStore.hasOlderMessages &&
+      !chatStore.olderMessagesLoading &&
+      !chatStore.messagesLoading
+    ) {
+      preserveScrollAfterPrepend.value = {
+        scrollTop: container.scrollTop,
+        scrollHeight: container.scrollHeight
+      }
+      chatStore.loadOlderMessages()
+    }
+    return
+  }
   
   // 检测是否向上滚动（用户想查看历史）
   const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50
@@ -532,7 +570,9 @@ const handleRegenerate = (message) => {
 watch(
   () => chatStore.currentSessionId,
   async () => {
-    scrollToBottom()
+    if (chatStore.currentSessionId) {
+      shouldScrollAfterSessionLoad.value = true
+    }
     await refreshContextUsage()
   }
 )
@@ -541,7 +581,15 @@ watch(
 watch(
   () => chatStore.currentMessages.length,
   () => {
-    scrollToBottom()
+    if (preserveScrollAfterPrepend.value) {
+      restoreScrollAfterPrepend()
+      return
+    }
+
+    if (shouldScrollAfterSessionLoad.value || isStreaming.value) {
+      scrollToBottom(true)
+      shouldScrollAfterSessionLoad.value = false
+    }
   }
 )
 
@@ -551,12 +599,13 @@ onMounted(async () => {
     // 进入页面时立即获取会话列表
     await chatStore.fetchSessionList(userStore.userId)
   }
-  
-  // 清空当前会话，准备创建新会话
-  chatStore.currentSessionId = ''
-  chatStore.clearCurrentMessages()
-  
-  scrollToBottom()
+
+  if (chatStore.currentSessionId && chatStore.currentMessages.length === 0) {
+    shouldScrollAfterSessionLoad.value = true
+    await chatStore.switchSession(chatStore.currentSessionId)
+  } else {
+    scrollToBottom()
+  }
 })
 
 // 组件激活时（从其他页面返回）
@@ -591,6 +640,15 @@ watch(
     }
   }
 )
+
+watch(
+  () => chatStore.olderMessagesLoading,
+  (loading, wasLoading) => {
+    if (!loading && wasLoading && preserveScrollAfterPrepend.value) {
+      restoreScrollAfterPrepend()
+    }
+  }
+)
 </script>
 
 <style scoped>
@@ -618,37 +676,43 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 24px;
-  background: var(--bg-secondary);
+  min-height: 44px;
+  padding: 8px 20px;
+  background: rgba(21, 25, 50, 0.92);
   border-bottom: 1px solid var(--border-color);
 }
 
 .chat-title {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-info {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .message-count {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-tertiary);
 }
 
 .context-usage-button {
-  min-width: 48px;
-  height: 36px;
+  min-width: 42px;
+  height: 28px;
   border-radius: 50%;
   border: 1px solid rgba(148, 163, 184, 0.28);
   background: rgba(15, 23, 42, 0.72);
   color: var(--text-primary);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   cursor: pointer;
   padding: 0 8px;
@@ -819,7 +883,7 @@ watch(
 
 @media (max-width: 768px) {
   .chat-header {
-    padding: 12px 16px;
+    padding: 8px 12px;
   }
 
   .chat-title {
@@ -842,18 +906,23 @@ watch(
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 24px;
+  padding: 16px 18px 12px;
+}
+
+.messages-loading {
+  min-height: 100%;
 }
 
 .messages-list {
-  max-width: 900px;
+  width: 85%;
+  max-width: 85%;
   margin: 0 auto;
 }
 
 .streaming-indicator {
   display: flex;
   gap: 8px;
-  padding: 16px;
+  padding: 10px;
   align-items: center;
   justify-content: center;
 }
@@ -887,5 +956,12 @@ watch(
 
 .chat-input-wrapper {
   flex-shrink: 0;
+}
+
+@media (max-width: 1024px) {
+  .messages-list {
+    width: 100%;
+    max-width: 100%;
+  }
 }
 </style>

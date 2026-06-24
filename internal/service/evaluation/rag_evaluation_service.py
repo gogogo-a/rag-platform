@@ -1,15 +1,21 @@
 """RAG 检索评估服务。"""
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 import json
+import os
 import random
 
 
 class RAGASEvaluator:
     """RAGAS 指标执行器。"""
+
+    def __init__(self, llm: Any = None, embeddings: Any = None):
+        self.llm = llm
+        self.embeddings = embeddings
 
     async def evaluate_production(self, question: str, answer: str, contexts: Sequence[str]) -> Dict[str, Optional[float]]:
         if not contexts:
@@ -18,7 +24,9 @@ class RAGASEvaluator:
                 "answer_relevance": 0.0,
                 "context_precision": 0.0,
             }
+        return await asyncio.to_thread(self._evaluate_production_sync, question, answer, contexts)
 
+    def _evaluate_production_sync(self, question: str, answer: str, contexts: Sequence[str]) -> Dict[str, Optional[float]]:
         try:
             from datasets import Dataset
             from ragas import evaluate
@@ -40,11 +48,18 @@ class RAGASEvaluator:
             result = evaluate(
                 Dataset.from_dict(data),
                 metrics=[faithfulness, answer_relevancy, context_precision],
+                llm=self._get_llm(),
+                embeddings=self._get_embeddings(),
                 raise_exceptions=False,
                 show_progress=False,
             )
         except TypeError:
-            result = evaluate(Dataset.from_dict(data), metrics=[faithfulness, answer_relevancy, context_precision])
+            result = evaluate(
+                Dataset.from_dict(data),
+                metrics=[faithfulness, answer_relevancy, context_precision],
+                llm=self._get_llm(),
+                embeddings=self._get_embeddings(),
+            )
 
         row = result.to_pandas().iloc[0]
         return {
@@ -89,6 +104,37 @@ class RAGASEvaluator:
                 "faithfulness": _clean_score(row.get("faithfulness")) if include_faithfulness else None,
             })
         return scores
+
+    def _get_llm(self) -> Any:
+        if self.llm is not None:
+            return self.llm
+        try:
+            from pkg.constants.constants import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
+            if not DEEPSEEK_API_KEY:
+                raise RuntimeError("RAGAS 评估模型未配置")
+            from langchain_openai import ChatOpenAI
+            self.llm = ChatOpenAI(
+                model=os.getenv("RAGAS_LLM_MODEL", "deepseek-chat"),
+                openai_api_key=DEEPSEEK_API_KEY,
+                openai_api_base=DEEPSEEK_BASE_URL,
+                temperature=0,
+                request_timeout=60,
+            )
+            return self.llm
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError("RAGAS 评估模型初始化失败") from exc
+
+    def _get_embeddings(self) -> Any:
+        if self.embeddings is not None:
+            return self.embeddings
+        try:
+            from ragas.embeddings import LangchainEmbeddingsWrapper
+            self.embeddings = LangchainEmbeddingsWrapper(_ProjectEmbeddings())
+            return self.embeddings
+        except Exception as exc:
+            raise RuntimeError("RAGAS 向量模型初始化失败") from exc
 
 
 class RAGEvaluationService:
@@ -366,15 +412,27 @@ class RAGEvaluationService:
                 record.ragas_status = "completed"
                 record.ragas_error = ""
                 record.completed_at = datetime.now()
-            except Exception:
+            except Exception as exc:
+                from log import logger
+                logger.error(f"RAGAS 评估执行失败: {exc}", exc_info=True)
                 record.queue_status = "failed"
                 record.ragas_status = "failed"
-                record.ragas_error = "评估失败"
+                record.ragas_error = _format_ragas_error(exc)
                 record.completed_at = datetime.now()
             await record.save()
 
     async def consume_queue_record(self, record: Any) -> None:
         await self.run_ragas_for_records([record])
+
+    async def recover_pending_queue_records(self, limit: int = 100) -> int:
+        records = await self.evaluation_model.find().to_list()
+        pending = [
+            record for record in records
+            if getattr(record, "target_type", "") == "rag_chunk"
+            and getattr(record, "queue_status", getattr(record, "ragas_status", "")) in {"queued", "running"}
+        ][:limit]
+        await self.run_ragas_for_records(pending)
+        return len(pending)
 
     async def requeue_record(self, record: Any) -> bool:
         record.queue_status = "queued"
@@ -384,12 +442,13 @@ class RAGEvaluationService:
         record.queued_at = datetime.now()
         record.started_at = None
         record.completed_at = None
+        await record.save()
         success = self.queue_producer.enqueue(record)
         if not success:
             record.queue_status = "failed"
             record.ragas_status = "failed"
             record.ragas_error = "评估任务入队失败"
-        await record.save()
+            await record.save()
         return success
 
     async def get_rag_evaluation_list(
@@ -565,3 +624,24 @@ def _clean_score(value: Any) -> Optional[float]:
         return round(float(value), 4)
     except (TypeError, ValueError):
         return None
+
+
+def _format_ragas_error(exc: Exception) -> str:
+    message = str(exc) or ""
+    if "评估依赖未安装" in message:
+        return message
+    if "RAGAS 评估模型" in message or "RAGAS 向量模型" in message:
+        return message
+    return "评估失败"
+
+
+class _ProjectEmbeddings:
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        from internal.embedding.embedding_service import embedding_service
+
+        return embedding_service.encode(texts).tolist()
+
+    def embed_query(self, text: str) -> List[float]:
+        from internal.embedding.embedding_service import embedding_service
+
+        return embedding_service.encode_query(text).tolist()

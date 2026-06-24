@@ -58,6 +58,9 @@ max_poll_records = 100
 # 会话超时时间（毫秒）
 session_timeout_ms = 30000
 
+[kafka.consumer_groups]
+rag_evaluation = "brainwave_ragas_group"
+
 # ==================== Embedding 配置 ====================
 [embedding]
 # 文本分块大小（字符数）

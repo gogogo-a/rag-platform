@@ -84,13 +84,20 @@ class StreamParser:
             return None
 
         if self.state == ParseState.IDLE and self._is_plain_answer_buffer():
-            self.state = ParseState.THOUGHT
-            thought_content = self.buffer.lstrip()
+            if self._looks_like_unmarked_reasoning(self.buffer):
+                self.state = ParseState.THOUGHT
+                event_type = "thought"
+            else:
+                self.state = ParseState.ANSWER
+                self.in_answer = True
+                event_type = "answer_chunk"
+
+            answer_content = self.buffer.lstrip()
             self.buffer = ""
-            if thought_content:
+            if answer_content:
                 return {
-                    "event": "thought",
-                    "content": thought_content
+                    "event": event_type,
+                    "content": answer_content
                 }
 
         # 根据当前状态处理内容
@@ -101,6 +108,25 @@ class StreamParser:
         if not stripped:
             return False
         return not self._could_be_marker_prefix(stripped)
+
+    def _looks_like_unmarked_reasoning(self, text: str) -> bool:
+        stripped = text.lstrip()
+        reasoning_phrases = (
+            "需要检索",
+            "需要先检索",
+            "需要查询",
+            "需要先查询",
+            "需要搜索",
+            "需要先搜索",
+            "需要整理",
+            "我需要检索",
+            "我需要查询",
+            "我需要搜索",
+            "我需要先检索",
+            "我需要先查询",
+            "我需要先搜索",
+        )
+        return any(phrase in stripped for phrase in reasoning_phrases)
 
     def _could_be_marker_prefix(self, text: str) -> bool:
         return any(marker.startswith(text) for marker in self._MARKERS)

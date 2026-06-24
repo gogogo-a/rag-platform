@@ -72,7 +72,6 @@ class ResourceMonitor:
         }
         
         self._initialized = True
-        logger.info(f"资源监控器已初始化，监控目录: {self.monitor_dir}")
     
     def _get_file_path(self) -> Path:
         """
@@ -246,15 +245,11 @@ class ResourceMonitor:
             with open(file_path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(metrics, ensure_ascii=False) + '\n')
             
-            logger.debug(f"✅ 资源监控数据已保存")
-        
         except Exception as e:
             logger.error(f"保存监控数据失败: {e}")
     
     def _monitor_loop(self):
         """监控循环（在后台线程运行）"""
-        logger.info(f"🔍 资源监控线程已启动，间隔: {self.interval}秒")
-        
         while self.monitoring:
             try:
                 # 收集指标（同步操作，无需事件循环）
@@ -269,8 +264,6 @@ class ResourceMonitor:
             # 等待下一次监控
             time.sleep(self.interval)
         
-        logger.info("🛑 资源监控线程已停止")
-    
     def start_monitoring(self, interval: int = 60):
         """
         启动资源监控
@@ -289,8 +282,6 @@ class ResourceMonitor:
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
         
-        logger.info(f"✅ 资源监控已启动，间隔: {interval}秒")
-    
     def stop_monitoring(self):
         """停止资源监控"""
         if not self.monitoring:
@@ -302,8 +293,6 @@ class ResourceMonitor:
         if self.monitor_thread:
             self.monitor_thread.join(timeout=5)
         
-        logger.info("✅ 资源监控已停止")
-    
     # ==================== 统计计数器 ====================
     
     def record_llm_call(self, tokens: int = 0, is_error: bool = False):
@@ -326,37 +315,45 @@ class ResourceMonitor:
         self.stats["mongodb_queries"] += 1
 
 
-# 全局单例
-resource_monitor = ResourceMonitor()
+# 全局单例（按需创建，避免导入模块时输出资源监控日志）
+_resource_monitor: Optional[ResourceMonitor] = None
+
+
+def get_resource_monitor() -> ResourceMonitor:
+    global _resource_monitor
+    if _resource_monitor is None:
+        _resource_monitor = ResourceMonitor()
+    return _resource_monitor
 
 
 # ==================== 便捷函数 ====================
 
 def start_resource_monitoring(interval: int = 60):
     """启动资源监控"""
-    resource_monitor.start_monitoring(interval)
+    get_resource_monitor().start_monitoring(interval)
 
 
 def stop_resource_monitoring():
     """停止资源监控"""
-    resource_monitor.stop_monitoring()
+    if _resource_monitor is not None:
+        _resource_monitor.stop_monitoring()
 
 
 def record_llm_call(tokens: int = 0, is_error: bool = False):
     """记录 LLM 调用"""
-    resource_monitor.record_llm_call(tokens, is_error)
+    get_resource_monitor().record_llm_call(tokens, is_error)
 
 
 def record_embedding_call():
     """记录 Embedding 调用"""
-    resource_monitor.record_embedding_call()
+    get_resource_monitor().record_embedding_call()
 
 
 def record_vector_search():
     """记录 向量检索"""
-    resource_monitor.record_vector_search()
+    get_resource_monitor().record_vector_search()
 
 
 def record_mongodb_query():
     """记录 MongoDB 查询"""
-    resource_monitor.record_mongodb_query()
+    get_resource_monitor().record_mongodb_query()

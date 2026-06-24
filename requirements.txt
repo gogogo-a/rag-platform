@@ -51,7 +51,7 @@ loguru
 psutil
 gputil
 mcp>=1.0.0
-ragas
+ragas==0.2.15
 datasets
 # langchain_mcp_adapters  # 暂时注释，版本冲突
 # uvicorn main:app --host 0.0.0.0 --port 8081

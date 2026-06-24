@@ -14,7 +14,7 @@ from .performance_monitor import (
 
 from .resource_monitor import (
     ResourceMonitor,
-    resource_monitor,
+    get_resource_monitor,
     start_resource_monitoring,
     stop_resource_monitoring,
     record_llm_call,
@@ -33,7 +33,7 @@ __all__ = [
     'record_performance',
     # 资源监控
     'ResourceMonitor',
-    'resource_monitor',
+    'get_resource_monitor',
     'start_resource_monitoring',
     'stop_resource_monitoring',
     'record_llm_call',
