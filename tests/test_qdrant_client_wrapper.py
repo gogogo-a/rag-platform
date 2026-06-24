@@ -157,6 +157,51 @@ class RagResultDeduplicationTest(unittest.TestCase):
 
         self.assertEqual(results, vector_results)
 
+    def test_rag_search_fuses_vector_and_keyword_results_with_rrf(self):
+        from internal.rag.rag_service import RAGService
+
+        vector_results = [
+            {
+                "text": "vector only",
+                "metadata": {"document_uuid": "doc-vector", "chunk_index": 0},
+                "vector_score": 0.91,
+                "score": 0.91,
+            },
+            {
+                "text": "shared result",
+                "metadata": {"document_uuid": "doc-shared", "chunk_index": 0},
+                "vector_score": 0.82,
+                "score": 0.82,
+            },
+        ]
+        keyword_results = [
+            {
+                "text": "shared result",
+                "metadata": {"document_uuid": "doc-shared", "chunk_index": 0},
+                "bm25_score": 3.0,
+            },
+            {
+                "text": "keyword only",
+                "metadata": {"document_uuid": "doc-keyword", "chunk_index": 0},
+                "bm25_score": 2.0,
+            },
+        ]
+
+        service = RAGService(use_reranker=False)
+
+        with patch("internal.rag.rag_service.embedding_service") as fake_embedding, \
+             patch("internal.rag.rag_service.qdrant_client") as fake_qdrant, \
+             patch.object(service, "_keyword_search", return_value=keyword_results):
+            fake_embedding.encode_query.return_value = [0.1, 0.2]
+            fake_qdrant.search_documents.return_value = vector_results
+
+            results = service.search("shared", top_k=3, user_permission=1)
+
+        self.assertEqual(results[0]["metadata"]["document_uuid"], "doc-shared")
+        self.assertAlmostEqual(results[0]["rrf_score"], 1 / 62 + 1 / 61)
+        self.assertEqual(results[1]["metadata"]["document_uuid"], "doc-vector")
+        self.assertEqual(results[2]["metadata"]["document_uuid"], "doc-keyword")
+
 
 if __name__ == "__main__":
     unittest.main()

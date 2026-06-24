@@ -27,7 +27,7 @@ def deduplicate_results(
     if not results:
         return []
 
-    score_field = "rerank_score" if "rerank_score" in results[0] else "vector_score"
+    score_field = "rerank_score" if "rerank_score" in results[0] else "rrf_score" if "rrf_score" in results[0] else "vector_score"
     sorted_results = sorted(results, key=lambda x: x.get(score_field, 0), reverse=True)
     deduplicated = []
     for current in sorted_results:
