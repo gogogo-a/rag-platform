@@ -267,9 +267,9 @@ const router = useRouter()
 const userStore = useUserStore()
 
 const isUser = props.message.role === 'user'
-const isThinkingExpanded = ref(true) // 默认展开思考过程
-const isObservationExpanded = ref(true) // 默认展开观察结果
-const isActionExpanded = ref(true) // 默认展开操作过程
+const isThinkingExpanded = ref(false)
+const isObservationExpanded = ref(false)
+const isActionExpanded = ref(false)
 const isObservationFullExpanded = ref(false) // 观察结果是否完全展开
 
 // 观察结果截取逻辑
@@ -694,6 +694,10 @@ const handleDislike = async () => {
   line-height: 1.6;
   margin-top: 4px;
   padding: 4px 12px;
+  max-height: 260px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* 思考过程展开/折叠动画 */
@@ -760,6 +764,10 @@ const handleDislike = async () => {
   margin-top: 4px;
   padding: 4px 12px;
   font-family: 'Courier New', monospace;
+  max-height: 260px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* 操作过程展开/折叠动画 */
@@ -826,6 +834,9 @@ const handleDislike = async () => {
   margin-top: 4px;
   padding: 4px 12px;
   white-space: pre-wrap;
+  max-height: 260px;
+  overflow-y: auto;
+  word-break: break-word;
 }
 
 .expand-dots {
@@ -1232,5 +1243,3 @@ const handleDislike = async () => {
   color: #f87171;
 }
 </style>
-
-

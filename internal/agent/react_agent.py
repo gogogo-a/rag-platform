@@ -8,6 +8,8 @@ import re
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain.agents.output_parsers import ReActSingleInputOutputParser
 from langchain_core.agents import AgentAction
+from langchain_core.agents import AgentFinish
+from langchain_core.exceptions import OutputParserException
 from langchain_core.tools import Tool
 from langchain_core.prompts import PromptTemplate
 from langchain_core.callbacks import BaseCallbackHandler
@@ -28,7 +30,14 @@ class TolerantReActOutputParser(ReActSingleInputOutputParser):
         return cleaned
 
     def parse(self, text: str):
-        parsed = super().parse(text)
+        try:
+            parsed = super().parse(text)
+        except OutputParserException:
+            if not re.search(r"(^|\n)\s*(Thought|Action|Action Input|Observation)\s*:", text):
+                answer = text.strip()
+                if answer:
+                    return AgentFinish({"output": answer}, text)
+            raise
         if isinstance(parsed, AgentAction):
             cleaned_tool = self._clean_tool_name(parsed.tool)
             if cleaned_tool != parsed.tool:
@@ -131,6 +140,78 @@ class ReActAgent:
             handle_parsing_errors=handle_parsing_error,  # 🔥 使用自定义错误处理
             return_intermediate_steps=True
         )
+
+    @staticmethod
+    def _chunk_to_text(chunk: Any) -> str:
+        if chunk is None:
+            return ""
+        if isinstance(chunk, str):
+            return chunk
+        content = getattr(chunk, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    parts.append(str(item.get("text") or item.get("content") or ""))
+            return "".join(parts)
+        if isinstance(chunk, dict):
+            return str(chunk.get("text") or chunk.get("content") or "")
+        return ""
+
+    def _emit_usage(self, chunk: Any) -> None:
+        if not self.callback or chunk is None:
+            return
+
+        usage = None
+        response_metadata = getattr(chunk, "response_metadata", None) or {}
+        usage_metadata = getattr(chunk, "usage_metadata", None) or {}
+        if isinstance(usage_metadata, dict) and usage_metadata:
+            usage = {
+                "prompt_tokens": usage_metadata.get("input_tokens"),
+                "completion_tokens": usage_metadata.get("output_tokens"),
+                "total_tokens": usage_metadata.get("total_tokens"),
+            }
+        token_usage = response_metadata.get("token_usage") if isinstance(response_metadata, dict) else None
+        if isinstance(token_usage, dict):
+            usage = {
+                "prompt_tokens": token_usage.get("prompt_tokens"),
+                "completion_tokens": token_usage.get("completion_tokens"),
+                "total_tokens": token_usage.get("total_tokens"),
+            }
+
+        if usage:
+            clean_usage = {key: value for key, value in usage.items() if isinstance(value, int)}
+            if clean_usage:
+                self.callback("usage", clean_usage)
+
+    def _emit_tool_end(self, output: Any) -> None:
+        if not self.callback:
+            return
+
+        output_text = output if isinstance(output, str) else str(output)
+        if output_text and (output_text.startswith("请按照正确的格式") or "Invalid Format" in output_text):
+            return
+
+        try:
+            import json
+            parsed = json.loads(output_text)
+            if isinstance(parsed, dict) and "documents" in parsed:
+                documents = parsed.get("documents", [])
+                if documents:
+                    self.callback("tool_result", {
+                        "tool_name": "knowledge_search",
+                        "documents": documents,
+                        "results": parsed.get("results", []),
+                    })
+                output_text = parsed.get("context", output_text)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        self.callback("observation", output_text)
     
     def _get_history_text(self) -> str:
         """
@@ -263,6 +344,53 @@ Thought:{agent_scratchpad}"""
         except Exception as e:
             logger.error(f"Agent 执行失败: {e}", exc_info=True)
             return f"抱歉，处理过程中出现错误: {str(e)}"
+
+    async def run_stream(self, question: str) -> str:
+        """
+        运行 ReAct Agent，并把模型 token 和工具事件实时推送到 callback。
+        """
+        try:
+            chat_history = self._get_history_text()
+            if chat_history:
+                chat_history = f"历史对话记录：\n{chat_history}\n"
+
+            inputs = {
+                "input": question,
+                "chat_history": chat_history
+            }
+            final_output = ""
+
+            async for event in self.agent_executor.astream_events(inputs, version="v2"):
+                event_type = event.get("event")
+                data = event.get("data") or {}
+
+                if event_type in {"on_chat_model_stream", "on_llm_stream"}:
+                    chunk = data.get("chunk")
+                    self._emit_usage(chunk)
+                    token = self._chunk_to_text(chunk)
+                    if token and self.callback:
+                        self.callback("llm_chunk", token)
+
+                elif event_type == "on_tool_start" and self.callback:
+                    tool_name = event.get("name") or "unknown"
+                    if str(tool_name).startswith("_Exception"):
+                        continue
+                    tool_input = data.get("input", "")
+                    self.callback("action", f"{tool_name}({tool_input})")
+
+                elif event_type == "on_tool_end":
+                    self._emit_tool_end(data.get("output", ""))
+
+                elif event_type == "on_chain_end":
+                    output = data.get("output")
+                    if isinstance(output, dict) and output.get("output"):
+                        final_output = output["output"]
+
+            return final_output or "抱歉，我无法回答这个问题。"
+
+        except Exception as e:
+            logger.error(f"Agent 流式执行失败: {e}", exc_info=True)
+            return await self.run(question, stream=False)
 
 
 def create_react_agent_wrapper(llm_service, tools_dict: Dict[str, Callable]) -> ReActAgent:

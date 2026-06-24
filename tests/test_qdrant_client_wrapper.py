@@ -130,6 +130,33 @@ class RagResultDeduplicationTest(unittest.TestCase):
 
         self.assertEqual(len(deduplicated), 2)
 
+    def test_rag_search_falls_back_to_vector_results_when_reranker_fails(self):
+        from internal.rag.rag_service import RAGService
+
+        vector_results = [
+            {
+                "text": "耿浩 实习经历：参与 AI 产品后台管理系统及官网建设。",
+                "metadata": {"filename": "耿浩-全栈开发工程师.pdf", "document_uuid": "doc-1"},
+                "vector_score": 0.91,
+            }
+        ]
+
+        class FailingReranker:
+            def rerank(self, **kwargs):
+                raise RuntimeError("reranker missing")
+
+        service = RAGService(use_reranker=True)
+        service.reranker = FailingReranker()
+
+        with patch("internal.rag.rag_service.embedding_service") as fake_embedding, \
+             patch("internal.rag.rag_service.qdrant_client") as fake_qdrant:
+            fake_embedding.encode_query.return_value = [0.1, 0.2]
+            fake_qdrant.search_documents.return_value = vector_results
+
+            results = service.search("耿浩的实习经历有什么", top_k=5, user_permission=1)
+
+        self.assertEqual(results, vector_results)
+
 
 if __name__ == "__main__":
     unittest.main()

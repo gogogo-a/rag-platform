@@ -207,7 +207,8 @@ class MessageService:
                 "actions": [],
                 "observations": [],
                 "documents": [],
-                "rag_results": []
+                "rag_results": [],
+                "usage": {}
             }
             
             # 性能监控
@@ -282,6 +283,15 @@ class MessageService:
 
                 elif event_type == "rag_results":
                     extra_data["rag_results"] = event_data.get("results", [])
+
+                elif event_type == "usage":
+                    usage = {
+                        key: value
+                        for key, value in event_data.items()
+                        if key in {"prompt_tokens", "completion_tokens", "total_tokens"} and isinstance(value, int)
+                    }
+                    if usage:
+                        extra_data["usage"].update(usage)
                     
                 elif event_type == "debug":
                     if show_thinking:
@@ -306,15 +316,15 @@ class MessageService:
             
             # 7. 保存 AI 消息
             if ai_reply_full:
-                final_extra_data = {"documents": extra_data["documents"]}
-                
-                if show_thinking:
-                    final_extra_data.update({
-                        "thoughts": extra_data["thoughts"],
-                        "actions": extra_data["actions"],
-                        "observations": extra_data["observations"]
-                    })
-                
+                final_extra_data = {
+                    "documents": extra_data["documents"],
+                    "thoughts": extra_data["thoughts"],
+                    "actions": extra_data["actions"],
+                    "observations": extra_data["observations"]
+                }
+                if extra_data["usage"]:
+                    final_extra_data["usage"] = extra_data["usage"]
+
                 ai_msg = await message_crud_service.save_ai_message(
                     session_id, 
                     ai_reply_full, 

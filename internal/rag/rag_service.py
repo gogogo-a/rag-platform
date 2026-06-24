@@ -73,13 +73,16 @@ class RAGService:
             ]
 
         if use_reranker and self.reranker and results:
-            reranked = self.reranker.rerank(
-                query=query,
-                documents=results,
-                top_k=rerank_top_k * 2,
-                score_threshold=rerank_score_threshold,
-            )
-            return self._deduplicate_results(reranked, target_count=rerank_top_k)
+            try:
+                reranked = self.reranker.rerank(
+                    query=query,
+                    documents=results,
+                    top_k=rerank_top_k * 2,
+                    score_threshold=rerank_score_threshold,
+                )
+                return self._deduplicate_results(reranked, target_count=rerank_top_k)
+            except Exception as exc:
+                logger.warning("Reranker 不可用，已使用向量检索结果: %s", exc)
 
         return self._deduplicate_results(results, target_count=rerank_top_k)
 

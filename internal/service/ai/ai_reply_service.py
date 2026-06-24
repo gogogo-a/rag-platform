@@ -164,6 +164,7 @@ class AIReplyService:
             # 创建事件队列和流式解析器
             event_queue = queue.Queue()
             stream_parser = StreamParser()
+            usage_data = {}
             
             # 用于收集文档信息
             retrieved_documents = []
@@ -171,7 +172,7 @@ class AIReplyService:
             
             # 定义回调函数
             def callback(event_type: str, content: Any):
-                nonlocal retrieved_documents, rag_results
+                nonlocal retrieved_documents, rag_results, usage_data
                 
                 # 收集文档信息
                 if event_type == "tool_result" and isinstance(content, dict):
@@ -185,6 +186,8 @@ class AIReplyService:
                             if doc["uuid"] not in existing_uuids:
                                 retrieved_documents.append(doc)
                                 existing_uuids.add(doc["uuid"])
+                elif event_type == "usage" and isinstance(content, dict):
+                    usage_data.update(content)
                 
                 event_queue.put((event_type, content))
             
@@ -196,7 +199,10 @@ class AIReplyService:
             )
             
             # 启动 Agent 任务
-            agent_task = asyncio.create_task(agent.run(user_message, stream=True))
+            if hasattr(agent, "run_stream"):
+                agent_task = asyncio.create_task(agent.run_stream(user_message))
+            else:
+                agent_task = asyncio.create_task(agent.run(user_message, stream=True))
             
             # 实时处理事件队列
             async for event_dict in self._process_event_queue(
@@ -226,6 +232,11 @@ class AIReplyService:
                     "event": "rag_results",
                     "data": {"results": rag_results}
                 }
+            if usage_data:
+                yield {
+                    "event": "usage",
+                    "data": usage_data
+                }
             
         except Exception as e:
             logger.error(f"生成 AI 回复失败: {e}", exc_info=True)
@@ -253,12 +264,19 @@ class AIReplyService:
         Yields:
             Dict: 事件字典
         """
+        last_process_event = None
         while not agent_task.done() or not event_queue.empty():
             try:
                 event_type, content = event_queue.get_nowait()
                 
                 # 处理回调事件
                 if event_type in ["action", "observation", "final_answer", "tool_result"]:
+                    if event_type in {"action", "observation"}:
+                        process_event_key = (event_type, str(content))
+                        if process_event_key == last_process_event:
+                            continue
+                        last_process_event = process_event_key
+
                     result = stream_parser.handle_callback_event(event_type, content)
                     if result:
                         yield {

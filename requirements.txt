@@ -17,7 +17,8 @@ langchain-core>=0.3.28,<1.0.0  # 兼容 langchain-mcp-adapters
 langgraph>=0.2.0,<0.3.0 # LangGraph 状态图
 ollama
 sentence-transformers
-transformers
+transformers==4.44.2
+tokenizers==0.19.1
 torch
 safetensors
 accelerate

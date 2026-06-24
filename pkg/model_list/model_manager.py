@@ -183,7 +183,7 @@ class ModelManager:
         model = FlagReranker(
             model_path,
             use_fp16=config.use_fp16,
-            device=device,
+            devices=device,
             trust_remote_code=True
         )
         
@@ -256,4 +256,3 @@ class ModelManager:
 # ==================== 导出统一管理器实例 ====================
 
 model_manager = ModelManager()
-

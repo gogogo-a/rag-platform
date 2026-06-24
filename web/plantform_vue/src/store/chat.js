@@ -15,7 +15,6 @@ export const useChatStore = defineStore('chat', {
     currentMessages: [],
     // 是否正在加载
     loading: false,
-    // 是否显示思考过程
     showThinking: true
   }),
 
@@ -176,9 +175,6 @@ export const useChatStore = defineStore('chat', {
       this.currentMessages = []
     },
 
-    /**
-     * 切换思考过程显示
-     */
     toggleShowThinking() {
       this.showThinking = !this.showThinking
     },
@@ -194,4 +190,3 @@ export const useChatStore = defineStore('chat', {
     }
   }
 })
-

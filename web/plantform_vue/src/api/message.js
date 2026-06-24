@@ -15,6 +15,13 @@ export function getMessageList(sessionId, params) {
   })
 }
 
+export function getContextUsage(sessionId) {
+  return request({
+    url: `/messages/${sessionId}/context-usage`,
+    method: 'get'
+  })
+}
+
 /**
  * 发送消息（流式）
  * 使用 Server-Sent Events (SSE)
@@ -126,4 +133,3 @@ export function sendMessageStreamWithOptions(data, isFormData = false, options =
     body: body
   })
 }
-

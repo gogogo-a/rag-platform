@@ -2,7 +2,7 @@
 流式解析器
 负责解析 LLM 输出的流式内容，识别 Thought/Action/Observation/Answer
 """
-from typing import Dict, Any, Optional, Generator
+from typing import Dict, Any, Optional, List
 from enum import Enum
 from log import logger
 
@@ -29,6 +29,9 @@ class StreamParser:
     
     def __init__(self):
         self.reset()
+
+    _MARKERS = ("Thought:", "Action:", "Action Input:", "Observation:", "Answer:", "Final Answer:")
+    _CONTROL_MARKERS = ("Action:", "Action Input:", "Observation:", "Answer:", "Final Answer:")
     
     def reset(self):
         """重置解析器状态"""
@@ -37,6 +40,10 @@ class StreamParser:
         self.current_content = ""
         self.in_answer = False
         self.last_observation = None
+        self._answer_started_without_content = False
+        self._strip_next_answer_chunk = False
+        self._pending_events: List[Dict[str, Any]] = []
+        self._state_changed = False
     
     def parse_chunk(self, chunk: str) -> Optional[Dict[str, Any]]:
         """
@@ -49,57 +56,130 @@ class StreamParser:
             解析结果字典，包含 event 和 content，或 None
         """
         self.buffer += chunk
+
+        if self._pending_events:
+            return self._pending_events.pop(0)
+
+        if self.state == ParseState.ANSWER:
+            if self._strip_next_answer_chunk:
+                self._strip_next_answer_chunk = False
+                chunk = chunk.lstrip()
+                if not chunk:
+                    return None
+            return self._process_current_state(chunk)
         
         # 检测状态转换
-        result = self._detect_state_change()
-        if result:
-            return result
-        
+        while True:
+            self._state_changed = False
+            result = self._detect_state_change()
+            if result:
+                return result
+            if self._pending_events:
+                return self._pending_events.pop(0)
+            if not self._state_changed:
+                break
+
+        if self._answer_started_without_content:
+            self._answer_started_without_content = False
+            return None
+
+        if self.state == ParseState.IDLE and self._is_plain_answer_buffer():
+            self.state = ParseState.THOUGHT
+            thought_content = self.buffer.lstrip()
+            self.buffer = ""
+            if thought_content:
+                return {
+                    "event": "thought",
+                    "content": thought_content
+                }
+
         # 根据当前状态处理内容
         return self._process_current_state(chunk)
+
+    def _is_plain_answer_buffer(self) -> bool:
+        stripped = self.buffer.lstrip()
+        if not stripped:
+            return False
+        return not self._could_be_marker_prefix(stripped)
+
+    def _could_be_marker_prefix(self, text: str) -> bool:
+        return any(marker.startswith(text) for marker in self._MARKERS)
+
+    def _find_next_marker(self) -> Optional[tuple[int, str]]:
+        matches = [
+            (self.buffer.find(marker), marker)
+            for marker in self._MARKERS
+            if self.buffer.find(marker) != -1
+        ]
+        matches = [match for match in matches if match[0] >= 0]
+        if not matches:
+            return None
+        return min(matches, key=lambda item: item[0])
+
+    def _take_thought_before_marker(self, marker_index: int) -> Optional[Dict[str, Any]]:
+        thought = self.buffer[:marker_index].strip()
+        if thought:
+            return {
+                "event": "thought",
+                "content": thought
+            }
+        return None
+
+    def _split_trailing_control_prefix(self) -> tuple[str, str]:
+        for index in range(len(self.buffer)):
+            suffix = self.buffer[index:].lstrip()
+            if suffix and any(marker.startswith(suffix) for marker in self._CONTROL_MARKERS):
+                return self.buffer[:index], self.buffer[index:]
+        return self.buffer, ""
     
     def _detect_state_change(self) -> Optional[Dict[str, Any]]:
         """检测状态转换"""
         
+        marker_match = self._find_next_marker()
+        if not marker_match:
+            return None
+
+        marker_index, marker = marker_match
+
+        if marker_index > 0:
+            thought_event = self._take_thought_before_marker(marker_index)
+            self.buffer = self.buffer[marker_index:]
+            self.current_content = ""
+            if thought_event and self.state in {ParseState.IDLE, ParseState.THOUGHT}:
+                return thought_event
+
         # 检测 Thought:
-        if self.state != ParseState.THOUGHT and 'Thought:' in self.buffer:
+        if marker == "Thought:":
             self.state = ParseState.THOUGHT
-            # 提取 Thought: 后面的内容
-            parts = self.buffer.split('Thought:', 1)
-            self.buffer = parts[1] if len(parts) > 1 else ""
+            self.buffer = self.buffer[len("Thought:"):]
             self.current_content = ""
-            return None  # 状态转换，不立即返回内容
-        
-        # 检测 Action:
-        if self.state != ParseState.ACTION and 'Action:' in self.buffer:
-            old_state = self.state
+            self._state_changed = True
+            return None
+
+        # 检测 Action 或 Action Input:
+        if marker in {"Action:", "Action Input:"}:
             self.state = ParseState.ACTION
-            # 提取 Action: 后面的内容
-            parts = self.buffer.split('Action:', 1)
-            self.buffer = parts[1] if len(parts) > 1 else ""
+            self.buffer = self.buffer[len(marker):]
             self.current_content = ""
+            self._state_changed = True
             return None
-        
+
         # 检测 Observation:
-        if self.state != ParseState.OBSERVATION and 'Observation:' in self.buffer:
+        if marker == "Observation:":
             self.state = ParseState.OBSERVATION
-            parts = self.buffer.split('Observation:', 1)
-            self.buffer = parts[1] if len(parts) > 1 else ""
+            self.buffer = self.buffer[len("Observation:"):]
             self.current_content = ""
+            self._state_changed = True
             return None
-        
+
         # 检测 Answer: 或 Final Answer:
-        if not self.in_answer and ('Answer:' in self.buffer or 'Final Answer:' in self.buffer):
+        if not self.in_answer and marker in {"Answer:", "Final Answer:"}:
             self.state = ParseState.ANSWER
             self.in_answer = True
+            self._state_changed = True
             
             # 提取 Answer: 后面的内容
-            if 'Final Answer:' in self.buffer:
-                parts = self.buffer.split('Final Answer:', 1)
-            else:
-                parts = self.buffer.split('Answer:', 1)
-            
-            answer_content = parts[1].strip() if len(parts) > 1 else ""
+            answer_content = self.buffer[len(marker):].lstrip()
             self.buffer = ""
             self.current_content = ""
             
@@ -108,6 +188,8 @@ class StreamParser:
                     "event": "answer_chunk",
                     "content": answer_content
                 }
+            self._answer_started_without_content = True
+            self._strip_next_answer_chunk = True
             return None
         
         return None
@@ -121,13 +203,35 @@ class StreamParser:
         
         if self.state == ParseState.THOUGHT:
             # 检查是否遇到下一个关键字
-            if 'Action:' in self.buffer or 'Answer:' in self.buffer:
+            marker_match = self._find_next_marker()
+            if marker_match:
+                result = self._detect_state_change()
+                if result:
+                    return result
+                if self._pending_events:
+                    return self._pending_events.pop(0)
                 return None  # 让状态转换处理
-            
-            self.current_content += chunk
+
+            stable_content, pending_prefix = self._split_trailing_control_prefix()
+            if stable_content:
+                content = stable_content.lstrip() if not self.current_content else stable_content
+                self.buffer = pending_prefix
+                self.current_content += content
+                return {
+                    "event": "thought",
+                    "content": content
+                }
+
+            stripped_buffer = self.buffer.lstrip()
+            if any(marker.startswith(stripped_buffer) for marker in self._CONTROL_MARKERS):
+                return None
+
+            content = self.buffer.lstrip() if not self.current_content else self.buffer
+            self.buffer = ""
+            self.current_content += content
             return {
                 "event": "thought",
-                "content": chunk
+                "content": content
             }
         
         elif self.state == ParseState.ACTION:

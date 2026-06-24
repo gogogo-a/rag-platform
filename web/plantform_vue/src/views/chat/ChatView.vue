@@ -12,11 +12,83 @@
           {{ chatStore.currentSession?.name || chatStore.currentSession?.session_name || '新会话' }}
         </h2>
         <div class="chat-info">
+          <button
+            v-if="canViewContextUsage && chatStore.currentSessionId"
+            class="context-usage-button"
+            :class="contextUsageLevel"
+            type="button"
+            :title="contextUsageTitle"
+            @click="openContextUsage"
+          >
+            {{ contextUsageLabel }}
+          </button>
           <span class="message-count">
             {{ chatStore.messageCount }} 条消息
           </span>
         </div>
       </div>
+
+      <el-drawer
+        v-model="contextDialogVisible"
+        title="上下文占用"
+        direction="rtl"
+        size="560px"
+        class="context-usage-drawer"
+      >
+        <div v-if="contextUsage" class="context-panel">
+          <div class="context-summary">
+            <div class="context-summary-item">
+              <span class="summary-label">模型</span>
+              <span class="summary-value">{{ contextUsage.model_name }}</span>
+            </div>
+            <div class="context-summary-item">
+              <span class="summary-label">已用</span>
+              <span class="summary-value">{{ formatToken(contextUsage.used_tokens) }}</span>
+            </div>
+            <div class="context-summary-item">
+              <span class="summary-label">总上下文</span>
+              <span class="summary-value">{{ formatToken(contextUsage.context_window) }}</span>
+            </div>
+            <div class="context-summary-item">
+              <span class="summary-label">剩余</span>
+              <span class="summary-value">{{ formatToken(contextUsage.remaining_tokens) }}</span>
+            </div>
+          </div>
+
+          <div class="context-meter">
+            <div class="context-meter-header">
+              <span>{{ contextUsageLabel }}</span>
+              <span>{{ contextSourceLabel }}</span>
+            </div>
+            <div class="context-meter-track">
+              <div class="context-meter-fill" :style="{ width: contextMeterWidth }"></div>
+            </div>
+          </div>
+
+          <div v-if="contextUsageSections.length" class="context-section-list">
+            <el-collapse>
+              <el-collapse-item
+                v-for="section in contextUsageSections"
+                :key="section.type"
+                :name="section.type"
+              >
+                <template #title>
+                  <div class="context-section-title">
+                    <span>{{ section.title }}</span>
+                    <span>{{ formatToken(section.tokens) }} · {{ sectionPercent(section.tokens) }}</span>
+                  </div>
+                </template>
+                <pre class="context-section-content">{{ section.content }}</pre>
+              </el-collapse-item>
+            </el-collapse>
+          </div>
+        </div>
+        <EmptyState
+          v-else-if="!contextLoading"
+          text="暂无上下文内容"
+          subtext=""
+        />
+      </el-drawer>
 
       <div class="chat-messages" ref="messagesContainer" @scroll="handleScroll">
         <EmptyState
@@ -52,9 +124,9 @@
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted, onActivated, onDeactivated, watch, defineOptions } from 'vue'
+import { ref, computed, nextTick, onMounted, onActivated, onDeactivated, watch, defineOptions } from 'vue'
 import { useUserStore, useChatStore } from '@/store'
-import { sendMessageStream, sendMessageStreamWithOptions } from '@/api'
+import { sendMessageStreamWithOptions, getContextUsage } from '@/api'
 import { ElMessage } from 'element-plus'
 import { ChatDotRound } from '@element-plus/icons-vue'
 
@@ -75,10 +147,62 @@ const messagesContainer = ref(null)
 const messageInputRef = ref(null)
 const isStreaming = ref(false)
 const savedScrollPosition = ref(0) // 保存滚动位置
+const contextDialogVisible = ref(false)
+const contextLoading = ref(false)
+const contextUsage = ref(null)
 
-// 🔥 滚动控制：流式输出时允许用户滑动一次后自由滚动
 const userScrollAttempts = ref(0) // 用户尝试滚动的次数
 const allowFreeScroll = ref(false) // 是否允许自由滚动
+
+const canViewContextUsage = computed(() => userStore.userInfo?.is_admin === 1)
+
+const contextUsageLabel = computed(() => {
+  if (!contextUsage.value) return '0%'
+  const prefix = contextUsage.value.count_type === 'estimated' ? '约' : ''
+  const percent = Number(contextUsage.value.percent || 0)
+  if (percent > 0 && percent < 1) return `${prefix}<1%`
+  const label = percent % 1 === 0 ? String(Math.round(percent)) : percent.toFixed(2)
+  return `${prefix}${label}%`
+})
+
+const contextUsageLevel = computed(() => {
+  const percent = contextUsage.value?.percent || 0
+  if (percent >= 85) return 'is-high'
+  if (percent >= 60) return 'is-medium'
+  return 'is-low'
+})
+
+const contextUsageSections = computed(() => contextUsage.value?.sections || contextUsage.value?.items || [])
+
+const contextUsageTitle = computed(() => {
+  if (!contextUsage.value) return '上下文占用'
+  return `${formatToken(contextUsage.value.used_tokens)} / ${formatToken(contextUsage.value.context_window)}`
+})
+
+const contextSourceLabel = computed(() => {
+  if (!contextUsage.value) return ''
+  if (contextUsage.value.source === 'actual') return '实际用量'
+  return contextUsage.value.count_type === 'estimated' ? '预估用量' : 'Tokenizer 统计'
+})
+
+const contextMeterWidth = computed(() => {
+  const percent = Math.min(100, Math.max(0, Number(contextUsage.value?.percent || 0)))
+  return `${percent}%`
+})
+
+const formatToken = (value) => {
+  const number = Number(value || 0)
+  return `${number.toLocaleString()} tokens`
+}
+
+const sectionPercent = (tokens) => {
+  const total = Number(contextUsage.value?.used_tokens || 0)
+  const value = Number(tokens || 0)
+  if (!total || !value) return '0%'
+  const percent = (value / total) * 100
+  if (percent > 0 && percent < 1) return '<1%'
+  return `${percent.toFixed(1)}%`
+}
 
 // 判断是否为最后一条消息
 const isLastMessage = (index) => {
@@ -125,6 +249,23 @@ const handleScroll = (event) => {
 const resetScrollState = () => {
   userScrollAttempts.value = 0
   allowFreeScroll.value = false
+}
+
+const refreshContextUsage = async () => {
+  if (!canViewContextUsage.value || !chatStore.currentSessionId) return
+  try {
+    contextLoading.value = true
+    contextUsage.value = await getContextUsage(chatStore.currentSessionId)
+  } catch (error) {
+    contextUsage.value = null
+  } finally {
+    contextLoading.value = false
+  }
+}
+
+const openContextUsage = async () => {
+  contextDialogVisible.value = true
+  await refreshContextUsage()
 }
 
 // 发送消息（SSE 流式）
@@ -226,13 +367,12 @@ const handleSendMessage = async ({ content, showThinking, files = [], location =
             const data = JSON.parse(line.substring(6))
             await handleSSEEvent(eventType, data)
           } catch (error) {
-            console.error('解析 SSE 数据失败:', error)
+            ElMessage.error('消息接收失败，请重试')
           }
         }
       }
     }
   } catch (error) {
-    console.error('发送消息失败:', error)
     ElMessage.error('发送消息失败，请重试')
     
     // 移除失败的消息
@@ -284,7 +424,7 @@ const handleSSEEvent = async (eventType, data) => {
         if (!lastMessage.action) {
           lastMessage.action = data.content
         } else {
-          lastMessage.action += data.content
+          lastMessage.action += `\n${data.content}`
         }
       }
       break
@@ -295,7 +435,7 @@ const handleSSEEvent = async (eventType, data) => {
         if (!lastMessage.observation) {
           lastMessage.observation = data.content
         } else {
-          lastMessage.observation += data.content
+          lastMessage.observation += `\n${data.content}`
         }
       }
       break
@@ -341,6 +481,7 @@ const handleSSEEvent = async (eventType, data) => {
       
       // 立即刷新会话列表以更新最后消息时间
       await chatStore.fetchSessionList(userStore.userId)
+      await refreshContextUsage()
       
       // 🔥 检测是否是第1轮对话，如果是则延迟刷新以获取自动生成的会话名称
       const currentMessageCount = chatStore.currentMessages.length
@@ -390,8 +531,9 @@ const handleRegenerate = (message) => {
 // 监听当前会话变化
 watch(
   () => chatStore.currentSessionId,
-  () => {
+  async () => {
     scrollToBottom()
+    await refreshContextUsage()
   }
 )
 
@@ -404,13 +546,10 @@ watch(
 )
 
 onMounted(async () => {
-  
   // 确保有 userId 才获取会话列表
   if (userStore.userId) {
     // 进入页面时立即获取会话列表
     await chatStore.fetchSessionList(userStore.userId)
-  } else {
-    console.warn('userId 不存在，无法获取会话列表')
   }
   
   // 清空当前会话，准备创建新会话
@@ -422,7 +561,6 @@ onMounted(async () => {
 
 // 组件激活时（从其他页面返回）
 onActivated(async () => {
-  
   // 如果会话列表为空且有 userId，重新获取会话列表
   if (chatStore.sessionList.length === 0 && userStore.userId) {
     await chatStore.fetchSessionList(userStore.userId)
@@ -503,6 +641,204 @@ watch(
   color: var(--text-tertiary);
 }
 
+.context-usage-button {
+  min-width: 48px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0 8px;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.context-usage-button:hover {
+  transform: translateY(-1px);
+  background: rgba(30, 41, 59, 0.9);
+}
+
+.context-usage-button.is-low {
+  border-color: rgba(34, 197, 94, 0.65);
+}
+
+.context-usage-button.is-medium {
+  border-color: rgba(245, 158, 11, 0.72);
+}
+
+.context-usage-button.is-high {
+  border-color: rgba(239, 68, 68, 0.78);
+}
+
+:deep(.context-usage-drawer) {
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+
+:deep(.context-usage-drawer .el-drawer__header) {
+  margin-bottom: 0;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+
+:deep(.context-usage-drawer .el-drawer__title) {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+:deep(.context-usage-drawer .el-drawer__close-btn) {
+  color: var(--text-secondary);
+}
+
+:deep(.context-usage-drawer .el-drawer__close-btn:hover) {
+  color: var(--neon-blue);
+}
+
+:deep(.context-usage-drawer .el-drawer__body) {
+  padding: 20px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+:deep(.context-usage-drawer .el-collapse) {
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+}
+
+:deep(.context-usage-drawer .el-collapse-item__header) {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 0 12px;
+}
+
+:deep(.context-usage-drawer .el-collapse-item__wrap) {
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+:deep(.context-usage-drawer .el-collapse-item__content) {
+  padding: 12px;
+  color: var(--text-secondary);
+}
+
+.context-panel {
+  height: calc(100vh - 96px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.context-summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-shrink: 0;
+}
+
+.context-summary-item {
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.summary-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.summary-value {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.context-meter {
+  flex-shrink: 0;
+  margin-bottom: 16px;
+}
+
+.context-meter-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.context-meter-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+  overflow: hidden;
+}
+
+.context-meter-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #22c55e, #38bdf8);
+}
+
+.context-section-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.context-section-title {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.context-section-content {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.38);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 768px) {
+  .chat-header {
+    padding: 12px 16px;
+  }
+
+  .chat-title {
+    font-size: 16px;
+  }
+
+  .chat-info {
+    gap: 10px;
+  }
+
+  .context-summary {
+    grid-template-columns: 1fr;
+  }
+
+  :deep(.context-usage-drawer) {
+    width: 100vw !important;
+  }
+}
+
 .chat-messages {
   flex: 1;
   overflow-y: auto;
@@ -553,4 +889,3 @@ watch(
   flex-shrink: 0;
 }
 </style>
-

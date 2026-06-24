@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query, Path, Request, Form, File, UploadFile
 from fastapi.responses import StreamingResponse
 from internal.dto.request import SendMessageRequest
 from internal.service.orm.message_sever import message_service
+from internal.service.message.context_usage_service import context_usage_service
 from api.v1.response_controller import json_response
 from pkg.middleware.auth import get_user_from_request
 from internal.document_client.document_extract import extract_document_content
@@ -225,42 +226,30 @@ async def send_message(
         return json_response("系统错误", -1)
 
 
+@router.get("/{session_id}/context-usage", summary="获取会话上下文占用")
+async def get_session_context_usage(
+    request: Request,
+    session_id: str = Path(..., description="会话UUID")
+):
+    try:
+        current_user = get_user_from_request(request)
+        if current_user.get("is_admin") != 1:
+            return json_response("无权限", -2, status_code=403)
+
+        data = await context_usage_service.get_session_context_usage(session_id)
+        return json_response("查询成功", 0, data)
+
+    except Exception as e:
+        logger.error(f"获取上下文占用失败: {e}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
 @router.get("/{session_id}", summary="获取会话的所有消息")
 async def get_session_messages(
     session_id: str = Path(..., description="会话UUID"),
     page: int = Query(default=1, ge=1, description="页码"),
     page_size: int = Query(default=50, ge=1, le=200, description="每页数量")
 ):
-    """
-    获取会话的所有消息（按时间升序）
-    
-    - **session_id**: 会话UUID
-    - **page**: 页码（从1开始，默认1）
-    - **page_size**: 每页数量（默认50，最大200）
-    
-    返回：
-    - total: 总消息数
-    - messages: 消息列表
-      - uuid: 消息UUID
-      - session_id: 会话ID
-      - content: 消息内容
-      - send_type: 发送者类型（0.用户，1.AI，2.系统）
-      - send_id: 发送者UUID
-      - send_name: 发送者昵称
-      - send_avatar: 发送者头像
-      - receive_id: 接受者UUID
-      - file_type: 文件类型
-      - file_name: 文件名
-      - file_size: 文件大小
-      - status: 状态（0.未发送，1.已发送）
-      - extra_data: 额外数据（仅AI消息有，包含思考过程和检索文档）
-        - documents: 检索到的文档列表 [{"uuid": "...", "name": "..."}]
-        - thoughts: 思考过程列表（仅当发送时启用了 show_thinking）
-        - actions: 执行动作列表（仅当发送时启用了 show_thinking）
-        - observations: 观察结果列表（仅当发送时启用了 show_thinking）
-      - created_at: 创建时间
-      - send_at: 发送时间
-    """
     try:
         logger.info(f"收到获取会话消息请求: session={session_id}, page={page}, page_size={page_size}")
         

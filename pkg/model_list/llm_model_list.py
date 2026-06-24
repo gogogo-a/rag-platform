@@ -2,6 +2,8 @@
 LLM 模型列表
 定义所有可用的大语言模型
 """
+import os
+
 from .base_model import LLMModelConfig
 
 
@@ -15,6 +17,7 @@ LLAMA_3_2 = LLMModelConfig(
     model_type="local",
     temperature=0.3,
     max_tokens=2048,
+    context_window=int(os.getenv("LLAMA_CONTEXT_WINDOW", os.getenv("OLLAMA_NUM_CTX", "8192"))),
     timeout=120
 )
 
@@ -29,6 +32,7 @@ DEEPSEEK_CHAT = LLMModelConfig(
     model_type="cloud",
     temperature=0.3,
     max_tokens=4096,
+    context_window=int(os.getenv("DEEPSEEK_CONTEXT_WINDOW", "64000")),
     timeout=30  # 🔥 调整为 30 秒，避免长时间等待
 )
 
@@ -68,4 +72,3 @@ def get_llm_model(model_name: str) -> LLMModelConfig:
 def list_llm_models():
     """列出所有可用的 LLM 模型"""
     return list(LLM_MODELS.values())
-

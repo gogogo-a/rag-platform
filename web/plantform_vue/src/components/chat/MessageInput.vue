@@ -24,9 +24,9 @@
         :class="{ 'thinking-active': showThinking }"
         class="thinking-button"
       >
-        {{ showThinking ? '显示' : '隐藏' }}思考过程
+        {{ showThinking ? '显示' : '隐藏' }}过程
       </el-button>
-      
+
       <el-button text :icon="Upload" size="small" @click="handleSelectFile">
         上传文件
       </el-button>
@@ -98,19 +98,18 @@ const chatStore = useChatStore()
 const inputMessage = ref('')
 const isSending = ref(false)
 const uploadedFiles = ref([]) // 暂存的文件列表
-const showThinking = ref(true) // 默认显示思考过程
 const fileInputRef = ref(null)
 const textareaRef = ref(null)
 const isDragging = ref(false) // 拖拽状态
 const userLocation = ref(null) // 用户位置信息
 const isComposing = ref(false) // 输入法状态（是否正在输入中文）
+const showThinking = computed(() => chatStore.showThinking)
 
 // 获取用户位置信息
 const getUserLocation = () => {
   return new Promise((resolve) => {
     // 检查浏览器是否支持地理位置
     if (!navigator.geolocation) {
-      console.warn('浏览器不支持地理定位')
       resolve(null)
       return
     }
@@ -126,8 +125,7 @@ const getUserLocation = () => {
         }
         resolve(locationData)
       },
-      (error) => {
-        console.warn('获取位置信息失败:', error.message)
+      () => {
         // 即使失败也不影响消息发送
         resolve(null)
       },
@@ -140,9 +138,7 @@ const getUserLocation = () => {
   })
 }
 
-// 切换思考过程显示
 const handleToggleThinking = () => {
-  showThinking.value = !showThinking.value
   chatStore.toggleShowThinking()
 }
 
@@ -209,12 +205,12 @@ const handleSend = async () => {
     
     await emit('send', {
       content: message,
-      showThinking: showThinking.value,
+      showThinking: chatStore.showThinking,
       files: files, // 传递文件列表
       location: location // 传递位置信息
     })
   } catch (error) {
-    console.error('发送消息失败:', error)
+    ElMessage.error('发送失败，请重试')
   } finally {
     isSending.value = false
   }
@@ -539,4 +535,3 @@ defineExpose({
   color: var(--danger-color);
 }
 </style>
-

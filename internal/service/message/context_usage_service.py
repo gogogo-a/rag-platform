@@ -1,0 +1,112 @@
+"""
+会话上下文占用统计
+"""
+from typing import Any, Dict, Optional
+
+from internal.model.message import MessageModel
+from internal.service.message.context_builder import context_builder
+from pkg.model_list import DEEPSEEK_CHAT
+
+
+class ContextUsageService:
+    """统计当前会话计入上下文的内容占用"""
+
+    def __init__(self):
+        self._tokenizer = None
+        self._tokenizer_checked = False
+
+    def get_context_window(self) -> int:
+        return int(DEEPSEEK_CHAT.context_window or 64000)
+
+    def _load_deepseek_tokenizer(self):
+        if self._tokenizer_checked:
+            return self._tokenizer
+
+        self._tokenizer_checked = True
+        try:
+            from transformers import AutoTokenizer
+
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                "deepseek-ai/DeepSeek-V3",
+                trust_remote_code=True,
+                local_files_only=True,
+            )
+        except Exception:
+            self._tokenizer = None
+        return self._tokenizer
+
+    def count_tokens(self, text: str) -> int:
+        tokenizer = self._load_deepseek_tokenizer()
+        if tokenizer is not None:
+            return len(tokenizer.encode(text or ""))
+        return self._estimate_tokens(text or "")
+
+    def get_count_type(self) -> str:
+        return "official" if self._load_deepseek_tokenizer() is not None else "estimated"
+
+    def _estimate_tokens(self, text: str) -> int:
+        chinese_chars = len([char for char in text if "\u4e00" <= char <= "\u9fff"])
+        other_chars = len(text) - chinese_chars
+        return max(0, int(chinese_chars * 1.5 + other_chars / 4))
+
+    def _get_tools_snapshot(self):
+        return context_builder.get_tools_snapshot()
+
+    async def _find_latest_actual_usage(self, session_id: str) -> Optional[int]:
+        messages = await MessageModel.find(
+            MessageModel.session_id == session_id,
+            MessageModel.send_type == 1,
+        ).sort(-MessageModel.created_at).limit(10).to_list()
+
+        for msg in messages:
+            extra_data = getattr(msg, "extra_data", None) or {}
+            usage = extra_data.get("usage") or {}
+            prompt_tokens = usage.get("prompt_tokens")
+            if isinstance(prompt_tokens, int) and prompt_tokens >= 0:
+                return prompt_tokens
+        return None
+
+    def _with_section_tokens(self, sections):
+        enriched = []
+        total = 0
+        for section in sections:
+            tokens = self.count_tokens(section.get("content", ""))
+            total += tokens
+            item = dict(section)
+            item["tokens"] = tokens
+            enriched.append(item)
+        return enriched, total
+
+    async def get_session_context_usage(self, session_id: str) -> Dict[str, Any]:
+        context_window = self.get_context_window()
+        preview = await context_builder.build_session_preview(session_id)
+        sections, estimated_tokens = self._with_section_tokens(preview["sections"])
+        actual_prompt_tokens = await self._find_latest_actual_usage(session_id)
+
+        if actual_prompt_tokens is not None:
+            used_tokens = actual_prompt_tokens
+            count_type = "official"
+            source = "actual"
+        else:
+            used_tokens = estimated_tokens
+            count_type = self.get_count_type()
+            source = "preview"
+
+        percent = 0
+        if context_window > 0:
+            percent = min(100, round((used_tokens / context_window) * 100, 2))
+
+        return {
+            "model_name": DEEPSEEK_CHAT.name,
+            "context_window": context_window,
+            "used_tokens": used_tokens,
+            "remaining_tokens": context_window - used_tokens,
+            "percent": percent,
+            "count_type": count_type,
+            "source": source,
+            "sections": sections,
+            "items": sections,
+        }
+
+
+context_usage_service = ContextUsageService()

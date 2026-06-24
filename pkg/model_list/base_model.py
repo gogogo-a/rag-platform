@@ -31,6 +31,7 @@ class LLMModelConfig(BaseModelConfig):
     """LLM 模型配置"""
     temperature: float = 0.3
     max_tokens: Optional[int] = None
+    context_window: Optional[int] = None
     timeout: int = 120
     
     def to_dict(self) -> Dict[str, Any]:
@@ -38,6 +39,7 @@ class LLMModelConfig(BaseModelConfig):
         data.update({
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
+            "context_window": self.context_window,
             "timeout": self.timeout
         })
         return data
@@ -73,4 +75,3 @@ class RerankerModelConfig(BaseModelConfig):
             "use_fp16": self.use_fp16
         })
         return data
-
