@@ -49,4 +49,6 @@ loguru
 psutil
 gputil
 mcp>=1.0.0
+ragas
+datasets
 # langchain_mcp_adapters  # 暂时注释，版本冲突

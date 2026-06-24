@@ -70,7 +70,11 @@ class StreamingCallbackHandler(BaseCallbackHandler):
                 if isinstance(parsed, dict) and "documents" in parsed:
                     documents = parsed.get("documents", [])
                     if documents:
-                        self.callback("tool_result", {"documents": documents})
+                        self.callback("tool_result", {
+                            "tool_name": "knowledge_search",
+                            "documents": documents,
+                            "results": parsed.get("results", []),
+                        })
                     # 使用 context 作为 observation
                     output = parsed.get("context", output)
             except (json.JSONDecodeError, TypeError):

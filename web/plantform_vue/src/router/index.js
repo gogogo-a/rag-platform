@@ -88,6 +88,12 @@ const routes = [
         name: 'AdminQACache',
         component: () => import('@/views/admin/QACacheManagement.vue'),
         meta: { requiresAuth: true, requiresAdmin: true }
+      },
+      {
+        path: 'rag-evaluations',
+        name: 'AdminRAGEvaluations',
+        component: () => import('@/views/admin/RAGEvaluationManagement.vue'),
+        meta: { requiresAuth: true, requiresAdmin: true }
       }
     ]
   }
@@ -131,4 +137,3 @@ router.beforeEach((to, from, next) => {
 })
 
 export default router
-

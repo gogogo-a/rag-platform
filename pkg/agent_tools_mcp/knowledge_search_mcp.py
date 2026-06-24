@@ -25,12 +25,20 @@ from typing import Dict, Any
 app = FastMCP("knowledge_search")
 
 
-def _search_qdrant_direct(query: str, top_k: int, user_permission: int):
-    from internal.embedding.embedding_service import embedding_service
-    from internal.db.qdrant import qdrant_client
+def _get_rag_search():
+    from internal.rag.rag_service import rag_service
 
-    query_embedding = embedding_service.encode_query(query, normalize=True)
-    return qdrant_client.search_documents(query_embedding, top_k=top_k, user_permission=user_permission)
+    return rag_service.search
+
+
+def _search_knowledge_base(query: str, top_k: int, use_reranker: bool, user_permission: int):
+    search = _get_rag_search()
+    return search(
+        query=query,
+        top_k=top_k,
+        use_reranker=use_reranker,
+        user_permission=user_permission,
+    )
 
 
 @app.tool()
@@ -56,12 +64,13 @@ def knowledge_search(
     try:
         import json
         
-        search_results = _search_qdrant_direct(query, top_k, user_permission)
+        search_results = _search_knowledge_base(query, top_k, use_reranker, user_permission)
         
         if not search_results:
             return json.dumps({
                 "success": True,
                 "context": "知识库中未找到相关信息",
+                "results": [],
                 "documents": []
             }, ensure_ascii=False)
         
@@ -97,6 +106,7 @@ def knowledge_search(
         result = {
             "success": True,
             "context": f"成功检索到 {len(search_results)} 个相关文档片段：\n\n{context}",
+            "results": search_results,
             "documents": documents
         }
         
@@ -107,6 +117,7 @@ def knowledge_search(
         return json.dumps({
             "success": False,
             "context": f"搜索失败: {str(e)}",
+            "results": [],
             "documents": []
         }, ensure_ascii=False)
 

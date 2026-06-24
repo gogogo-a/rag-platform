@@ -167,14 +167,18 @@ class AIReplyService:
             
             # 用于收集文档信息
             retrieved_documents = []
+            rag_results = []
             
             # 定义回调函数
             def callback(event_type: str, content: Any):
-                nonlocal retrieved_documents
+                nonlocal retrieved_documents, rag_results
                 
                 # 收集文档信息
                 if event_type == "tool_result" and isinstance(content, dict):
                     documents = content.get("documents", [])
+                    results = content.get("results", [])
+                    if results:
+                        rag_results.extend(results)
                     if documents:
                         existing_uuids = {doc["uuid"] for doc in retrieved_documents}
                         for doc in documents:
@@ -216,6 +220,11 @@ class AIReplyService:
                 yield {
                     "event": "documents",
                     "data": {"documents": retrieved_documents}
+                }
+            if rag_results:
+                yield {
+                    "event": "rag_results",
+                    "data": {"results": rag_results}
                 }
             
         except Exception as e:

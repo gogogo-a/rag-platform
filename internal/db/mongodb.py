@@ -37,6 +37,7 @@ class MongoDB:
         from internal.model.qa_cache import QACacheModel
         from internal.model.evaluation import EvaluationModel
         from internal.model.benchmark import BenchmarkModel
+        from internal.model.evaluation_config import EvaluationConfigModel
         
         # MongoDB 连接 URL
         url = MONGODB_URL
@@ -68,7 +69,8 @@ class MongoDB:
                     ChunkModel,
                     QACacheModel,
                     EvaluationModel,
-                    BenchmarkModel
+                    BenchmarkModel,
+                    EvaluationConfigModel
                 ]
             )
             print(f"✓ Beanie ODM 初始化成功！")

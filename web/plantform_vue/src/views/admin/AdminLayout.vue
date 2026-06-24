@@ -29,6 +29,11 @@
           <span>QA 缓存管理</span>
         </el-menu-item>
 
+        <el-menu-item index="/admin/rag-evaluations">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>RAG 评估</span>
+        </el-menu-item>
+
         <el-menu-item index="/admin/monitor">
           <el-icon><Monitor /></el-icon>
           <span>系统监控</span>
@@ -53,7 +58,7 @@
 </template>
 
 <script setup>
-import { User, Document, Monitor, DocumentCopy, ChatDotRound } from '@element-plus/icons-vue'
+import { User, Document, Monitor, DocumentCopy, ChatDotRound, DataAnalysis } from '@element-plus/icons-vue'
 </script>
 
 <style scoped>
@@ -124,4 +129,3 @@ import { User, Document, Monitor, DocumentCopy, ChatDotRound } from '@element-pl
   opacity: 0;
 }
 </style>
-

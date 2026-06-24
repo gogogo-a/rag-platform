@@ -12,6 +12,7 @@ from api.v1.log_controller import router as log_router
 from api.v1.monitor_controller import router as monitor_router
 from api.v1.visualization_controller import router as visualization_router
 from api.v1.qa_cache_controller import router as qa_cache_router
+from api.v1.evaluation_controller import router as evaluation_router
 from log import logger
 
 
@@ -51,6 +52,9 @@ def setup_routes(app: FastAPI):
     
     # ==================== QA 缓存管理路由 ====================
     app.include_router(qa_cache_router)
+
+    # ==================== RAG 评估路由 ====================
+    app.include_router(evaluation_router)
     
     logger.info("✓ 路由注册完成")
     
@@ -60,4 +64,3 @@ def setup_routes(app: FastAPI):
         if hasattr(route, 'methods'):
             methods = ','.join(route.methods)
             logger.info(f"  {methods:20} {route.path}")
-

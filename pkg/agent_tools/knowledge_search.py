@@ -25,21 +25,16 @@ def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True, user
             - documents: 文档元信息列表（uuid, name）
     """
     try:
-        # 延迟导入，避免循环依赖
         from internal.rag.rag_service import rag_service
-        
-        print(f"[工具] 知识库搜索: {query} (Top {top_k}, user_permission={user_permission})")
-        
-        # 执行 RAG 检索（只调用一次，传递用户权限）
+
         search_results = rag_service.search(
             query=query,
             top_k=top_k,
             use_reranker=use_reranker,
-            user_permission=user_permission  # 🔥 传递用户权限
+            user_permission=user_permission
         )
         
         if not search_results:
-            print(f"[工具] 未找到相关文档")
             return {
                 "success": False,
                 "results": [],
@@ -92,11 +87,7 @@ def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True, user
                     "uuid": doc_uuid,
                     "name": doc_name
                 })
-        
-        print(f"[工具] 找到 {len(search_results)} 个相关文档片段")
-        print(f"[工具] 涉及 {len(documents_info)} 个不同文档")
-        print(f"[工具] 上下文长度: {len(context)} 字符")
-        
+
         return {
             "success": True,
             "results": search_results,
@@ -107,7 +98,6 @@ def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True, user
         }
         
     except Exception as e:
-        print(f"[工具] 知识库搜索失败: {e}")
         return {
             "success": False,
             "results": [],
@@ -122,4 +112,3 @@ def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True, user
 knowledge_search.prompt_template = "rag"
 knowledge_search.description = "从知识库检索相关信息（RAG检索），用于回答需要参考文档的问题"
 knowledge_search.is_admin = False  # 所有用户可用
-

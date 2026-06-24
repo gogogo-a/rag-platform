@@ -11,6 +11,7 @@ from internal.model.chunk import ChunkModel
 from internal.model.qa_cache import QACacheModel
 from internal.model.evaluation import EvaluationModel
 from internal.model.benchmark import BenchmarkModel
+from internal.model.evaluation_config import EvaluationConfigModel
 
 __all__ = [
     "DocumentModel",
@@ -21,5 +22,6 @@ __all__ = [
     "ChunkModel",
     "QACacheModel",
     "EvaluationModel",
-    "BenchmarkModel"
+    "BenchmarkModel",
+    "EvaluationConfigModel"
 ]

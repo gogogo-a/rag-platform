@@ -28,6 +28,8 @@ document_embedding = "document_embedding"
 document_delete = "document_delete"
 # 批量处理主题
 batch_processing = "batch_processing"
+# RAGAS 评估主题
+rag_evaluation = "rag_evaluation"
 
 # 生产者配置
 [kafka.producer]

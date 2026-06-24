@@ -206,7 +206,8 @@ class MessageService:
                 "thoughts": [],
                 "actions": [],
                 "observations": [],
-                "documents": []
+                "documents": [],
+                "rag_results": []
             }
             
             # 性能监控
@@ -278,6 +279,9 @@ class MessageService:
                 elif event_type == "documents":
                     extra_data["documents"] = event_data.get("documents", [])
                     yield event_dict
+
+                elif event_type == "rag_results":
+                    extra_data["rag_results"] = event_data.get("results", [])
                     
                 elif event_type == "debug":
                     if show_thinking:
@@ -317,6 +321,20 @@ class MessageService:
                     user_id,
                     extra_data=final_extra_data
                 )
+
+                if extra_data["rag_results"]:
+                    from internal.service.evaluation import RAGEvaluationService
+
+                    evaluation_service = RAGEvaluationService()
+                    await evaluation_service.save_rag_call_records(
+                        question=content,
+                        answer=ai_reply_full,
+                        session_id=session_id,
+                        user_id=user_id,
+                        message_id=ai_msg.uuid,
+                        rag_results=extra_data["rag_results"],
+                        start_ragas=True,
+                    )
                 
                 # 7.1 处理 thought_chain_id
                 thought_chain_id = None

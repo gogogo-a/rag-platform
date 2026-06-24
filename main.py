@@ -10,6 +10,7 @@ from internal.db.mongodb import init_mongodb, close_mongodb
 from internal.db.qdrant import qdrant_client, qa_qdrant_client
 from internal.db.redis import redis_client  # 直接导入全局单例实例
 from internal.document_client.document_processor import document_processor
+from internal.service.evaluation.rag_evaluation_consumer import start_rag_evaluation_consumer
 from internal.http_sever.app import create_app
 from internal.monitor import start_resource_monitoring, stop_resource_monitoring
 from pkg.agent_tools_mcp import mcp_manager  # 🔥 导入 MCP 管理器
@@ -55,6 +56,11 @@ async def lifespan(app: FastAPI):
         logger.info("📝 正在启动文档处理服务...")
         document_processor.start_processing()
         logger.info("✓ 文档处理服务已启动（Kafka 消费者运行中）")
+
+        # ==================== 启动 RAGAS 评估队列 ====================
+        logger.info("📋 正在启动 RAGAS 评估队列...")
+        start_rag_evaluation_consumer()
+        logger.info("✓ RAGAS 评估队列已启动")
         
         # ==================== 启动资源监控 ====================
         logger.info("📊 正在启动资源监控...")

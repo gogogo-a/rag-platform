@@ -359,7 +359,11 @@ Thought:{agent_scratchpad}"""
                 if isinstance(parsed, dict) and "documents" in parsed:
                     documents = parsed.get("documents", [])
                     if self.callback:
-                        self.callback("tool_result", {"documents": documents})
+                        self.callback("tool_result", {
+                            "tool_name": tool_name,
+                            "documents": documents,
+                            "results": parsed.get("results", []),
+                        })
                     result = parsed.get("context", result)
             except (json.JSONDecodeError, TypeError):
                 pass
