@@ -13,7 +13,7 @@
       </el-button>
     </div>
 
-    <div class="session-content">
+    <div class="session-content" @scroll="handleSessionScroll">
       <LoadingSpinner v-if="chatStore.loading && sessionList.length === 0" text="加载中..." />
       
       <EmptyState
@@ -40,7 +40,7 @@
           </div>
           <div class="session-info">
             <div class="session-name">{{ session.name || session.session_name || '新会话' }}</div>
-            <div class="session-last-message">{{ session.last_message || '暂无消息' }}</div>
+            <div class="session-last-message">{{ getSessionPreview(session) }}</div>
           </div>
           <div class="session-actions" @click.stop>
             <el-dropdown @command="(command) => handleSessionAction(command, session)">
@@ -60,6 +60,11 @@
             </el-dropdown>
           </div>
         </div>
+        <LoadingSpinner
+          v-if="chatStore.loadingMoreSessions"
+          text="加载中..."
+          class="session-more-loading"
+        />
       </div>
     </div>
     
@@ -91,14 +96,16 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { useChatStore } from '@/store'
+import { useChatStore, useUserStore } from '@/store'
 import { Plus, ChatDotRound, More, Edit, Delete } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import LoadingSpinner from '@/components/public/LoadingSpinner.vue'
 import EmptyState from '@/components/public/EmptyState.vue'
 import { updateSession, deleteSession } from '@/api/session'
+import { sanitizeUserVisiblePreview } from '@/utils/agentProcess'
 
 const chatStore = useChatStore()
+const userStore = useUserStore()
 
 const sessionList = computed(() => chatStore.sessionList)
 
@@ -140,6 +147,19 @@ const getSessionId = (session) => {
 
 const isActiveSession = (session) => {
   return getSessionId(session) === String(chatStore.currentSessionId || '')
+}
+
+const getSessionPreview = (session) => {
+  const preview = sanitizeUserVisiblePreview(session?.last_message)
+  return preview || '暂无消息'
+}
+
+const handleSessionScroll = (event) => {
+  const container = event.target
+  const remaining = container.scrollHeight - container.scrollTop - container.clientHeight
+  if (remaining > 80) return
+
+  chatStore.loadMoreSessions(userStore.userInfo?.uuid || userStore.userInfo?.id)
 }
 
 // 选择会话
@@ -195,14 +215,10 @@ const handleDeleteSession = async (session) => {
       }
     )
     
-    // 调用删除 API
-    const res = await deleteSession(sessionId)
+    await deleteSession(sessionId)
     
-    // API 成功时直接返回（拦截器已处理错误情况）
     ElMessage.success('删除成功')
-    
-    // 刷新页面
-    window.location.reload()
+    chatStore.removeSession(sessionId)
   } catch (error) {
     // 用户取消删除
     if (error !== 'cancel') {
@@ -279,6 +295,10 @@ const handleRenameSession = async () => {
 
 .session-items {
   padding: 8px;
+}
+
+.session-more-loading {
+  padding: 12px 0 8px;
 }
 
 .session-item {

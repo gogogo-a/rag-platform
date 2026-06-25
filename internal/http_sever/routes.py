@@ -13,6 +13,8 @@ from api.v1.monitor_controller import router as monitor_router
 from api.v1.visualization_controller import router as visualization_router
 from api.v1.qa_cache_controller import router as qa_cache_router
 from api.v1.evaluation_controller import router as evaluation_router
+from api.v1.prompt_controller import router as prompt_router
+from api.v1.agent_controller import router as agent_router
 from log import logger
 
 
@@ -55,6 +57,12 @@ def setup_routes(app: FastAPI):
 
     # ==================== RAG 评估路由 ====================
     app.include_router(evaluation_router)
+
+    # ==================== Prompt 管理路由 ====================
+    app.include_router(prompt_router)
+
+    # ==================== Agent 管理路由 ====================
+    app.include_router(agent_router)
     
     logger.info("✓ 路由注册完成")
     

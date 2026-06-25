@@ -12,12 +12,15 @@ from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMess
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from pkg.model_list import ModelManager, LLAMA_3_2  # 默认模型配置
-from pkg.agent_prompt.prompt_templates import get_prompt, SUMMARY_PROMPT
 from pkg.agent_tools import (
     get_tools_info,
     get_prompt_for_tools
 )
 from pkg.constants.constants import MAX_TOKEN
+
+
+DEFAULT_SYSTEM_PROMPT = "你是一个智能助手，回答要准确、简洁、清晰。"
+SUMMARY_SYSTEM_PROMPT = "你是一个对话总结助手，请保留关键事实、用户意图和未完成事项。"
 
 
 class LLMService:
@@ -66,11 +69,10 @@ class LLMService:
         if system_prompt:
             self.system_prompt = system_prompt
         elif self.tools:
-            # 如果有工具但没有自定义提示词，根据工具自动选择
-            prompt_template = get_prompt_for_tools(self.tools)
-            self.system_prompt = get_prompt(prompt_template)
+            tool_names = get_prompt_for_tools(self.tools)
+            self.system_prompt = f"{DEFAULT_SYSTEM_PROMPT}\n可用工具类型：{tool_names}"
         else:
-            self.system_prompt = get_prompt("default")
+            self.system_prompt = DEFAULT_SYSTEM_PROMPT
         
         # 🔥 使用 LangChain 的历史记录管理
         self.chat_history: BaseChatMessageHistory = InMemoryChatMessageHistory()
@@ -270,7 +272,7 @@ class LLMService:
         ])
         
         summary_messages = [
-            SystemMessage(content=SUMMARY_PROMPT),
+            SystemMessage(content=SUMMARY_SYSTEM_PROMPT),
             HumanMessage(content=f"请总结以下对话：\n\n{history_text}")
         ]
         

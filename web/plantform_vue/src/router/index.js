@@ -94,6 +94,18 @@ const routes = [
         name: 'AdminRAGEvaluations',
         component: () => import('@/views/admin/RAGEvaluationManagement.vue'),
         meta: { requiresAuth: true, requiresAdmin: true }
+      },
+      {
+        path: 'prompts',
+        name: 'AdminPrompts',
+        component: () => import('@/views/admin/PromptManagement.vue'),
+        meta: { requiresAuth: true, requiresAdmin: true }
+      },
+      {
+        path: 'agents',
+        name: 'AdminAgents',
+        component: () => import('@/views/admin/AgentManagement.vue'),
+        meta: { requiresAuth: true, requiresAdmin: true }
       }
     ]
   }

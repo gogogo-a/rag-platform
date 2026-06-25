@@ -93,11 +93,28 @@ GAODE_API_KEY=
 # langgraph: LangGraph 状态图 Agent（支持错误恢复、条件分支）
 AGENT_TYPE=react
 
+# Agent 模式
+# single: 单一 Agent（默认）
+# expert: 专家模式（主 Agent 调用多个子 Agent）
+AGENT_MODE=single
+
 # Agent 最大迭代次数（工具调用轮数）
 AGENT_MAX_ITERATIONS=5
 
 # Agent 错误恢复最大重试次数（仅 langgraph 模式有效）
 AGENT_MAX_RETRIES=2
+
+# 专家模式主控最大调用轮数
+EXPERT_MAX_STEPS=3
+
+# 专家模式子 Agent 可见历史条数
+EXPERT_CONTEXT_HISTORY_COUNT=5
+
+# 专家任务最大失败重试次数
+EXPERT_TASK_MAX_RETRIES=5
+
+# 第一版保持串行编排
+EXPERT_PARALLEL_ENABLED=false
 
 # ==================== 问答缓存配置 ====================
 

@@ -11,10 +11,17 @@ import {
   normalizeChatMessages
 } from './chatPagination'
 
+export const DEFAULT_SESSION_PAGE_SIZE = 15
+
 export const useChatStore = defineStore('chat', {
   state: () => ({
     // 会话列表
     sessionList: [],
+    sessionPage: 1,
+    sessionPageSize: DEFAULT_SESSION_PAGE_SIZE,
+    totalSessions: 0,
+    hasMoreSessions: false,
+    loadingMoreSessions: false,
     // 当前活动的会话 ID
     currentSessionId: '',
     // 当前会话的消息列表
@@ -27,7 +34,8 @@ export const useChatStore = defineStore('chat', {
     messagePageSize: DEFAULT_MESSAGE_PAGE_SIZE,
     totalMessages: 0,
     hasOlderMessages: false,
-    showThinking: true
+    showThinking: true,
+    agentMode: 'single'
   }),
 
   getters: {
@@ -44,16 +52,26 @@ export const useChatStore = defineStore('chat', {
     /**
      * 获取会话列表
      */
-    async fetchSessionList(userId, page = 1, pageSize = 50) {
+    async fetchSessionList(userId, page = 1, pageSize = this.sessionPageSize, options = {}) {
+      const appendMode = options.mode === 'append'
       try {
-        this.loading = true
+        if (appendMode) {
+          this.loadingMoreSessions = true
+        } else {
+          this.loading = true
+        }
         const data = await getSessionList({
           user_id: userId,
           page,
           page_size: pageSize
         })
         
-        this.sessionList = data.sessions || []
+        const sessions = data.sessions || []
+        this.sessionList = appendMode ? [...this.sessionList, ...sessions] : sessions
+        this.sessionPage = page
+        this.sessionPageSize = pageSize
+        this.totalSessions = Number(data.total || 0)
+        this.hasMoreSessions = this.sessionList.length < this.totalSessions
         
         // 不自动选择会话，让用户手动选择或创建新会话
         
@@ -62,7 +80,21 @@ export const useChatStore = defineStore('chat', {
         return { success: false, error }
       } finally {
         this.loading = false
+        this.loadingMoreSessions = false
       }
+    },
+
+    async loadMoreSessions(userId) {
+      if (this.loading || this.loadingMoreSessions || !this.hasMoreSessions) {
+        return { success: false }
+      }
+
+      return await this.fetchSessionList(
+        userId,
+        this.sessionPage + 1,
+        this.sessionPageSize,
+        { mode: 'append' }
+      )
     },
 
     /**
@@ -223,19 +255,28 @@ export const useChatStore = defineStore('chat', {
       this.showThinking = !this.showThinking
     },
 
+    setAgentMode(mode) {
+      this.agentMode = mode === 'expert' ? 'expert' : 'single'
+    },
+
     /**
      * 清除所有聊天数据（用户登出时调用）
      */
     clearAll() {
       this.sessionList = []
+      this.sessionPage = 1
+      this.totalSessions = 0
+      this.hasMoreSessions = false
       this.currentSessionId = ''
       this.currentMessages = []
       this.loading = false
+      this.loadingMoreSessions = false
       this.messagesLoading = false
       this.olderMessagesLoading = false
       this.currentMessagePage = 1
       this.totalMessages = 0
       this.hasOlderMessages = false
+      this.agentMode = 'single'
     }
   }
 })

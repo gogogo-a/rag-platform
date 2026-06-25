@@ -4,7 +4,6 @@
 from typing import Any, Dict, List, Tuple
 
 from internal.model.message import MessageModel
-from pkg.agent_prompt.prompt_templates import get_agent_prompt
 
 
 REACT_PROMPT_TEMPLATE = """尽你所能回答以下问题。你可以使用以下工具：
@@ -47,8 +46,9 @@ class ContextBuilder:
         question = latest_user_message.content if latest_user_message else ""
         tools_text, tool_names = self.get_tools_snapshot()
 
+        system_prompt = await self._get_system_prompt()
         sections = [
-            self._section("system_prompt", "系统提示词", get_agent_prompt(use_multi_tool=True)),
+            self._section("system_prompt", "系统提示词", system_prompt),
             self._section(
                 "react_template",
                 "ReAct 模板",
@@ -124,6 +124,14 @@ class ContextBuilder:
                 tool_lines.append(f"{name}: {description}")
 
         return "\n".join(tool_lines), ", ".join(tool_names)
+
+    async def _get_system_prompt(self) -> str:
+        try:
+            from internal.service.orm.prompt_service import prompt_service
+
+            return await prompt_service.get_active_prompt("single")
+        except Exception:
+            return ""
 
     def _section(self, section_type: str, title: str, content: str, estimated: bool = True) -> Dict[str, Any]:
         return {

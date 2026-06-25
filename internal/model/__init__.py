@@ -12,6 +12,9 @@ from internal.model.qa_cache import QACacheModel
 from internal.model.evaluation import EvaluationModel
 from internal.model.benchmark import BenchmarkModel
 from internal.model.evaluation_config import EvaluationConfigModel
+from internal.model.expert_experience import ExpertExperienceModel
+from internal.model.prompt import PromptModel
+from internal.model.agent_config import AgentConfigModel
 
 __all__ = [
     "DocumentModel",
@@ -23,5 +26,8 @@ __all__ = [
     "QACacheModel",
     "EvaluationModel",
     "BenchmarkModel",
-    "EvaluationConfigModel"
+    "EvaluationConfigModel",
+    "PromptModel",
+    "ExpertExperienceModel",
+    "AgentConfigModel"
 ]

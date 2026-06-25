@@ -1,3 +1,5 @@
+import { hydrateAgentProcessFields, hasExpertProcessBlocks } from '../utils/agentProcess.js'
+
 export const DEFAULT_MESSAGE_PAGE_SIZE = 10
 
 export const getInitialMessagePage = (total, pageSize = DEFAULT_MESSAGE_PAGE_SIZE) => {
@@ -24,15 +26,24 @@ export const normalizeChatMessages = (messages = []) => {
       }
 
       if (msg.extra_data) {
-        if (msg.extra_data.thoughts && msg.extra_data.thoughts.length > 0) {
+        hydrateAgentProcessFields(processedMsg)
+        const hasExpertBlocks = hasExpertProcessBlocks(processedMsg)
+
+        if (hasExpertBlocks) {
+          processedMsg.thinking = ''
+          processedMsg.action = ''
+          processedMsg.observation = ''
+        }
+
+        if (!hasExpertBlocks && msg.extra_data.thoughts && msg.extra_data.thoughts.length > 0) {
           processedMsg.thinking = msg.extra_data.thoughts.join('\n\n')
         }
 
-        if (msg.extra_data.actions && msg.extra_data.actions.length > 0) {
+        if (!hasExpertBlocks && msg.extra_data.actions && msg.extra_data.actions.length > 0) {
           processedMsg.action = msg.extra_data.actions.join('\n\n')
         }
 
-        if (msg.extra_data.observations && msg.extra_data.observations.length > 0) {
+        if (!hasExpertBlocks && msg.extra_data.observations && msg.extra_data.observations.length > 0) {
           processedMsg.observation = msg.extra_data.observations.join('\n\n')
         }
 

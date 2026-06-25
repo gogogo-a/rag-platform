@@ -30,6 +30,12 @@ document_delete = "document_delete"
 batch_processing = "batch_processing"
 # RAGAS 评估主题
 rag_evaluation = "rag_evaluation"
+# 专家任务主题
+expert_tasks = "expert_tasks"
+# 专家结果主题
+expert_results = "expert_results"
+# 专家死信主题
+expert_dead_letters = "expert_dead_letters"
 
 # 生产者配置
 [kafka.producer]
@@ -60,6 +66,9 @@ session_timeout_ms = 30000
 
 [kafka.consumer_groups]
 rag_evaluation = "brainwave_ragas_group"
+expert_tasks = "brainwave_expert_worker_group"
+expert_results = "brainwave_expert_supervisor_group"
+expert_dead_letters = "brainwave_expert_dead_letter_group"
 
 # ==================== Embedding 配置 ====================
 [embedding]

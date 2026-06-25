@@ -13,8 +13,66 @@
       </div>
 
       <div class="message-body">
+        <div v-if="showThinking && !isUser && hasExpertBlocks" class="expert-processes">
+          <div v-if="supervisorProcesses.length" class="agent-block supervisor-block">
+            <div
+              class="agent-block-header"
+              :class="{ 'is-active': isSupervisorExpanded }"
+              @click="toggleSupervisor"
+            >
+              <el-icon class="agent-block-icon"><MagicStick /></el-icon>
+              <span>主助手</span>
+              <el-icon class="toggle-icon" :class="{ 'is-expanded': isSupervisorExpanded }">
+                <ArrowDown />
+              </el-icon>
+            </div>
+            <transition name="thinking-expand">
+              <div v-show="isSupervisorExpanded" class="agent-block-content">
+                <div
+                  v-for="process in supervisorProcesses"
+                  :key="`supervisor-${process.stepIndex}-${process.phase}-${process.content}`"
+                  class="agent-process-row"
+                >
+                  <span class="agent-process-phase">{{ getPhaseLabel(process.phase) }}</span>
+                  <span class="agent-process-text">{{ process.content }}</span>
+                </div>
+              </div>
+            </transition>
+          </div>
+
+          <div
+            v-for="group in expertProcessGroups"
+            :key="group.agentKey"
+            class="agent-block expert-block"
+          >
+            <div
+              class="agent-block-header"
+              :class="{ 'is-active': isExpertExpanded(group.agentKey) }"
+              @click="toggleExpert(group.agentKey)"
+            >
+              <el-icon class="agent-block-icon"><Tools /></el-icon>
+              <span>调用：{{ group.agentName }}</span>
+              <el-icon class="toggle-icon" :class="{ 'is-expanded': isExpertExpanded(group.agentKey) }">
+                <ArrowDown />
+              </el-icon>
+            </div>
+            <transition name="thinking-expand">
+              <div v-show="isExpertExpanded(group.agentKey)" class="agent-block-content">
+                <div
+                  v-for="process in group.processes"
+                  :key="`${group.agentKey}-${process.stepIndex}-${process.phase}-${process.content}`"
+                  class="agent-process-row"
+                >
+                  <span class="agent-process-phase">{{ getPhaseLabel(process.phase) }}</span>
+                  <span class="agent-process-text">{{ process.content }}</span>
+                </div>
+              </div>
+            </transition>
+          </div>
+        </div>
+
         <!-- 思考过程 -->
-        <div v-if="showThinking && !isUser && message.thinking" class="thinking-process">
+        <div v-if="showThinking && !isUser && !hasExpertBlocks && message.thinking" class="thinking-process">
           <div 
             class="thinking-header" 
             :class="{ 'is-active': isThinkingExpanded }"
@@ -32,7 +90,7 @@
         </div>
 
         <!-- 观察结果 -->
-        <div v-if="showThinking && !isUser && message.observation" class="observation-process">
+        <div v-if="showThinking && !isUser && !hasExpertBlocks && message.observation" class="observation-process">
           <div 
             class="observation-header" 
             :class="{ 'is-active': isObservationExpanded }"
@@ -58,7 +116,7 @@
         </div>
 
         <!-- 操作过程 -->
-        <div v-if="showThinking && !isUser && message.action" class="action-process">
+        <div v-if="showThinking && !isUser && !hasExpertBlocks && message.action" class="action-process">
           <div 
             class="action-header" 
             :class="{ 'is-active': isActionExpanded }"
@@ -247,6 +305,8 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore, useChatStore } from '@/store'
+import { PHASE_LABELS, getExpertProcessGroups, getSupervisorProcesses, hasExpertProcessBlocks } from '@/utils/agentProcess'
+import { formatChatMessage } from '@/utils/markdown'
 import { User, Service, CopyDocument, RefreshRight, ArrowDown, MagicStick, Tools, View, Document, DocumentCopy, Right, Picture, Download, Star, StarFilled, CircleClose, CircleCloseFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { submitFeedback } from '@/api/message'
@@ -273,6 +333,11 @@ const isThinkingExpanded = ref(false)
 const isObservationExpanded = ref(false)
 const isActionExpanded = ref(false)
 const isObservationFullExpanded = ref(false) // 观察结果是否完全展开
+const isSupervisorExpanded = ref(true)
+const expandedExperts = ref({})
+const hasExpertBlocks = computed(() => hasExpertProcessBlocks(props.message))
+const supervisorProcesses = computed(() => getSupervisorProcesses(props.message))
+const expertProcessGroups = computed(() => getExpertProcessGroups(props.message))
 
 // 观察结果截取逻辑
 const MAX_OBSERVATION_LENGTH = 200
@@ -306,6 +371,25 @@ const toggleObservation = () => {
 // 切换操作过程展开/折叠
 const toggleAction = () => {
   isActionExpanded.value = !isActionExpanded.value
+}
+
+const toggleSupervisor = () => {
+  isSupervisorExpanded.value = !isSupervisorExpanded.value
+}
+
+const isExpertExpanded = (agentKey) => {
+  return expandedExperts.value[agentKey] !== false
+}
+
+const toggleExpert = (agentKey) => {
+  expandedExperts.value = {
+    ...expandedExperts.value,
+    [agentKey]: !isExpertExpanded(agentKey)
+  }
+}
+
+const getPhaseLabel = (phase) => {
+  return PHASE_LABELS[phase] || '过程'
 }
 
 // 展开观察结果全部内容
@@ -475,16 +559,8 @@ const formatFileSize = (bytes) => {
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
 }
 
-// 格式化消息（支持 Markdown 简单格式）
 const formatMessage = (content) => {
-  if (!content) return ''
-  
-  // 简单的 Markdown 格式支持
-  return content
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') // 加粗
-    .replace(/\*(.*?)\*/g, '<em>$1</em>') // 斜体
-    .replace(/`(.*?)`/g, '<code>$1</code>') // 行内代码
-    .replace(/\n/g, '<br>') // 换行
+  return formatChatMessage(content)
 }
 
 // 复制消息
@@ -639,6 +715,84 @@ const handleDislike = async () => {
 
 .message-body {
   margin-bottom: 6px;
+}
+
+.expert-processes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.agent-block {
+  padding: 5px;
+  border-radius: 7px;
+  border-left: 3px solid var(--neon-blue);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.supervisor-block {
+  border-left-color: var(--neon-purple);
+  background: rgba(168, 85, 247, 0.1);
+}
+
+.expert-block {
+  border-left-color: #10b981;
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.agent-block-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.3s ease;
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+
+.agent-block-header:hover,
+.agent-block-header.is-active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.agent-block-icon {
+  font-size: 16px;
+  color: currentColor;
+}
+
+.agent-block-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 4px 10px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.agent-process-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.agent-process-phase {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.agent-process-text {
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .thinking-process {

@@ -30,7 +30,25 @@ class ReturnLoggingMiddlewareTest(unittest.TestCase):
         self.assertEqual(200, records[0]["status_code"])
         self.assertEqual(12.5, records[0]["database_duration_ms"])
         self.assertEqual(1, records[0]["database_query_count"])
-        self.assertEqual({"name": "报告", "count": 2}, json.loads(records[0]["body"]))
+        self.assertEqual('{"name":"报告","count":2}', records[0]["body"])
+
+    def test_long_json_response_body_is_truncated_in_log_record(self):
+        from pkg.middleware.response_logger import ReturnLoggingMiddleware
+
+        records = []
+        app = FastAPI()
+        app.add_middleware(ReturnLoggingMiddleware, log_sink=records.append)
+
+        @app.get("/items")
+        async def items():
+            return JSONResponse({"content": "一二三四五六七八九十" * 50})
+
+        response = TestClient(app).get("/items")
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("一二三四五六七八九十" * 50, response.json()["content"])
+        self.assertEqual(403, len(records[0]["body"]))
+        self.assertTrue(records[0]["body"].endswith("..."))
 
     def test_event_stream_response_is_not_consumed(self):
         from pkg.middleware.response_logger import ReturnLoggingMiddleware

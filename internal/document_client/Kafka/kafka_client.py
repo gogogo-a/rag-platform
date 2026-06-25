@@ -134,7 +134,8 @@ class KafkaClient:
             handler: 消息处理函数
             consumer_group: 消费者组ID
         """
-        if topic in self.consumers:
+        consumer_key = f"{topic}:{consumer_group or ''}"
+        if consumer_key in self.consumers:
             logger.warning(f"主题 {topic} 的消费者已存在")
             return
         
@@ -161,13 +162,13 @@ class KafkaClient:
                 **config
             )
             
-            self.consumers[topic] = consumer
+            self.consumers[consumer_key] = consumer
             
             # 启动消费者线程
             self.running = True
             consumer_thread = threading.Thread(
                 target=self._consume_loop,
-                args=(topic, handler),
+                args=(consumer_key, topic, handler),
                 daemon=True,
                 name=f"KafkaConsumer-{topic}"
             )
@@ -180,7 +181,7 @@ class KafkaClient:
             logger.error(f"Kafka 消费者启动失败: {e}", exc_info=True)
             raise
     
-    def _consume_loop(self, topic: str, handler: Callable[[Dict[str, Any]], None]):
+    def _consume_loop(self, consumer_key: str, topic: str, handler: Callable[[Dict[str, Any]], None]):
         """
         消费者循环
         
@@ -188,7 +189,7 @@ class KafkaClient:
             topic: 主题名称
             handler: 消息处理函数
         """
-        consumer = self.consumers[topic]
+        consumer = self.consumers[consumer_key]
         logger.info(f"消费者循环已启动: {topic}")
         
         try:
@@ -220,10 +221,10 @@ class KafkaClient:
         self.running = False
         
         # 关闭消费者
-        for topic, consumer in self.consumers.items():
+        for consumer_key, consumer in self.consumers.items():
             try:
                 consumer.close()
-                logger.info(f"消费者已关闭: {topic}")
+                logger.info(f"消费者已关闭: {consumer_key}")
             except Exception as e:
                 logger.error(f"关闭消费者失败: {e}", exc_info=True)
         
@@ -267,4 +268,3 @@ def get_kafka_client(
     if kafka_client is None:
         kafka_client = KafkaClient(bootstrap_servers, producer_config, consumer_config)
     return kafka_client
-

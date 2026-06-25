@@ -6,11 +6,13 @@ from typing import Optional
 
 from log import logger
 from pkg.model_list import DEEPSEEK_CHAT
-from pkg.agent_prompt.prompt_templates import SUMMARY_PROMPT
 from pkg.constants.constants import SUMMARY_MESSAGE_THRESHOLD
 
 from internal.service.message.history_manager import history_manager
 from internal.service.message.message_service import message_crud_service
+
+
+SUMMARY_SYSTEM_PROMPT = "你是一个对话总结助手，请保留关键事实、用户意图和未完成事项。"
 
 
 class SummaryService:
@@ -90,7 +92,7 @@ class SummaryService:
             )
             
             summary_messages = [
-                {"role": "system", "content": SUMMARY_PROMPT},
+                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                 {"role": "user", "content": f"请总结以下对话：\n\n{dialog_text}"}
             ]
             

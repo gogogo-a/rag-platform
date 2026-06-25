@@ -5,6 +5,8 @@ MCP 工具管理器
 import asyncio
 import os
 import logging
+import json
+import re
 from typing import List, Dict, Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -12,6 +14,61 @@ from mcp.client.stdio import stdio_client
 from .mcp_config import MCP_TOOLS, PYTHON_PATH
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_json_object(text: str) -> Dict[str, Any]:
+    cleaned = str(text or "").strip().strip("*` \n\t\r")
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return {}
+    try:
+        parsed = json.loads(cleaned[start:end + 1])
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def _extract_city(text: str) -> str:
+    cleaned = str(text or "")
+    common_cities = (
+        "北京", "上海", "广州", "深圳", "杭州", "南京", "成都", "重庆", "天津", "西安",
+        "武汉", "长沙", "苏州", "青岛", "厦门", "郑州", "济南", "福州", "昆明", "哈尔滨",
+    )
+    for city in common_cities:
+        if city in cleaned:
+            return city
+    match = re.search(r"([\u4e00-\u9fa5]{2,8})(?:市)?(?:天气|气温|预报)", cleaned)
+    return match.group(1) if match else ""
+
+
+def normalize_mcp_tool_arguments(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    args = dict(arguments or {})
+
+    query = args.get("query")
+    if isinstance(query, str):
+        embedded = _extract_json_object(query)
+        if embedded:
+            args.update(embedded)
+            args.pop("query", None)
+
+    if tool_name == "weather_query":
+        if "city" not in args:
+            city = _extract_city(query or args)
+            if city:
+                args["city"] = city
+        if "extensions" not in args:
+            text = str(query or "")
+            args["extensions"] = "all" if any(word in text for word in ("明天", "未来", "预报", "后天")) else "base"
+        args.pop("query", None)
+
+    if tool_name == "web_search":
+        if "max_results" not in args:
+            args["max_results"] = 5
+        if "search_recency" not in args:
+            args["search_recency"] = "year"
+
+    return args
 
 
 class MCPManager:
@@ -72,8 +129,6 @@ class MCPManager:
                 # 创建异步包装函数
                 def make_async_wrapper(sess, tname):
                     async def async_tool(tool_input=None, **kwargs):
-                        import json
-
                         # LangChain 可能传递 tool_input 字符串或 kwargs
                         if isinstance(tool_input, str):
                             # 尝试解析 JSON 字符串
@@ -91,6 +146,8 @@ class MCPManager:
                             kwargs.update(tool_input)
                         elif tool_input is None and not kwargs:
                             kwargs = {}
+
+                        kwargs = normalize_mcp_tool_arguments(tname, kwargs)
 
                         try:
                             result = await sess.call_tool(tname, arguments=kwargs)

@@ -32,6 +32,7 @@ async def send_message(
     send_name: Optional[str] = Form(None, description="发送者昵称（可选）"),
     send_avatar: Optional[str] = Form(None, description="发送者头像URL（可选）"),
     show_thinking: str = Form("false", description="是否显示思考过程"),
+    agent_mode: str = Form("single", description="Agent 模式：single 或 expert"),
     location: Optional[str] = Form(None, description="用户位置信息（JSON字符串，包含经纬度等）"),
     skip_cache: str = Form("false", description="是否跳过缓存（重新回答时使用）"),
     regenerate_message_id: Optional[str] = Form(None, description="重新生成时的原消息ID（用于删除旧缓存）"),
@@ -177,6 +178,9 @@ async def send_message(
                 return json_response(f"文件处理失败: {str(e)}", -1)
         
         show_thinking_enabled = show_thinking.lower() == "true"
+        normalized_agent_mode = agent_mode.lower().strip()
+        if normalized_agent_mode not in {"single", "expert"}:
+            normalized_agent_mode = "single"
         logger.info(f"收到发送消息请求: user={user_id}, nickname={user_nickname}, session={session_id}, show_thinking={show_thinking_enabled}, has_file={file is not None}")
         
         async def event_generator():
@@ -194,6 +198,7 @@ async def send_message(
                     file_content=file_content,  # 🔥 文档内容（已解析）
                     file_bytes=file_bytes,  # 🔥 图片字节流（未解析，Service 层流式处理）
                     show_thinking=show_thinking_enabled,
+                    agent_mode=normalized_agent_mode,
                     location=location,  # 🔥 用户位置信息（GPS 经纬度，用于 POI 搜索、天气查询、路线规划等）
                     skip_cache=skip_cache.lower() == "true",  # 🔥 是否跳过缓存
                     regenerate_message_id=regenerate_message_id  # 🔥 重新生成时的原消息ID

@@ -11,8 +11,7 @@ import queue
 
 from log import logger
 from pkg.model_list import DEEPSEEK_CHAT
-from pkg.agent_prompt.prompt_templates import get_agent_prompt
-from pkg.constants.constants import AGENT_TYPE, AGENT_MAX_ITERATIONS, AGENT_MAX_RETRIES
+from pkg.constants.constants import AGENT_TYPE, AGENT_MODE, AGENT_MAX_ITERATIONS, AGENT_MAX_RETRIES
 
 from .stream_parser import StreamParser
 from .thought_chain_store import thought_chain_store
@@ -40,6 +39,7 @@ class AIReplyService:
         if not hasattr(self, '_initialized'):
             self._initialized = True
             self._agent_type = AGENT_TYPE
+            self._agent_mode = AGENT_MODE
             logger.info(f"AIReplyService 初始化，Agent 类型: {self._agent_type}")
     
     def _create_agent(self, llm_service, tools: Dict, callback: Callable):
@@ -82,7 +82,8 @@ class AIReplyService:
         history: List[Dict[str, Any]],
         user_permission: int = 0,
         original_question: str = None,
-        skip_cache: bool = False
+        skip_cache: bool = False,
+        agent_mode: str = "single"
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         生成 AI 回复（流式）
@@ -95,6 +96,7 @@ class AIReplyService:
             user_permission: 用户权限（0=普通用户，1=管理员）
             original_question: 原始问题（用于相似问题检索，不包含增强内容）
             skip_cache: 是否跳过缓存（重新回答时使用）
+            agent_mode: Agent 模式
             
         Yields:
             Dict: 事件字典 {"event": str, "data": dict}
@@ -139,8 +141,8 @@ class AIReplyService:
             available_tools = mcp_manager.get_tool_map()
             tools_list = mcp_manager.get_tools()
             
-            # 使用多工具综合 Agent Prompt
-            multi_tool_prompt = get_agent_prompt(use_multi_tool=True)
+            normalized_agent_mode = self._normalize_agent_mode(agent_mode)
+            system_prompt = await self._get_system_prompt(normalized_agent_mode)
             
             # 创建 ChatService
             chat_service = ChatService(
@@ -148,7 +150,7 @@ class AIReplyService:
                 user_id=user_id,
                 model_name=DEEPSEEK_CHAT.name,
                 model_type=DEEPSEEK_CHAT.model_type,
-                system_prompt=multi_tool_prompt,
+                system_prompt=system_prompt,
                 tools=tools_list,
                 auto_summary=False,
                 max_history_count=10
@@ -191,11 +193,12 @@ class AIReplyService:
                 
                 event_queue.put((event_type, content))
             
-            # 创建 Agent（根据配置选择类型）
-            agent = self._create_agent(
+            agent = self._create_agent_for_mode(
+                agent_mode=normalized_agent_mode,
                 llm_service=chat_service.llm_service,
                 tools=available_tools,
-                callback=callback
+                history=history,
+                callback=callback,
             )
             
             # 启动 Agent 任务
@@ -244,6 +247,39 @@ class AIReplyService:
                 "event": "error",
                 "data": {"content": str(e)}
             }
+
+    def _normalize_agent_mode(self, agent_mode: Optional[str]) -> str:
+        mode = (agent_mode or self._agent_mode or "single").lower().strip()
+        return mode if mode in {"single", "expert"} else "single"
+
+    async def _get_system_prompt(self, agent_mode: str) -> str:
+        from internal.service.orm.prompt_service import prompt_service
+
+        if agent_mode == "expert":
+            return await prompt_service.get_active_prompt("supervisor")
+        return await prompt_service.get_active_prompt("single")
+
+    def _create_agent_for_mode(
+        self,
+        agent_mode: str,
+        llm_service,
+        tools: Dict,
+        history: List[Dict[str, Any]],
+        callback: Callable,
+    ):
+        if agent_mode == "expert":
+            from internal.agent.expert_orchestrator import ExpertOrchestrator
+            return ExpertOrchestrator(
+                llm_service=llm_service,
+                tool_map=tools,
+                history=history,
+                callback=callback,
+            )
+        return self._create_agent(
+            llm_service=llm_service,
+            tools=tools,
+            callback=callback,
+        )
     
     async def _process_event_queue(
         self,
@@ -283,6 +319,36 @@ class AIReplyService:
                             "event": result["event"],
                             "data": {"content": result["content"]}
                         }
+
+                elif event_type == "expert_manifest" and isinstance(content, dict):
+                    yield {
+                        "event": "expert_manifest",
+                        "data": content
+                    }
+
+                elif event_type == "agent_process" and isinstance(content, dict):
+                    yield {
+                        "event": "agent_process",
+                        "data": content
+                    }
+
+                elif event_type == "expert_question" and isinstance(content, dict):
+                    yield {
+                        "event": "expert_question",
+                        "data": content
+                    }
+
+                elif event_type == "expert_task_status" and isinstance(content, dict):
+                    yield {
+                        "event": "expert_task_status",
+                        "data": content
+                    }
+
+                elif event_type == "expert_experience" and isinstance(content, dict):
+                    yield {
+                        "event": "expert_experience",
+                        "data": content
+                    }
                 
                 # 处理 LLM chunk
                 elif event_type == "llm_chunk":

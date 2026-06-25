@@ -171,6 +171,48 @@ class StreamParserTest(unittest.TestCase):
             [result for result in results if result],
         )
 
+    def test_react_trace_before_final_answer_never_enters_answer_content(self):
+        parser = StreamParser()
+
+        chunks = [
+            "好的，我来查询。\n\n",
+            "Action: web_search\n",
+            'Action Input: {"query": "北京好玩的地方"}',
+            "已经获取推荐信息。",
+            "\n\nAction: weather_query\n",
+            'Action Input: {"city": "北京"}',
+            "\n\nFinal Answer:\n### 北京推荐\n- 故宫\n- 天坛",
+        ]
+        results = [parser.parse_chunk(chunk) for chunk in chunks]
+
+        answer = "".join(
+            result["content"]
+            for result in results
+            if result and result["event"] == "answer_chunk"
+        )
+
+        self.assertEqual("### 北京推荐\n- 故宫\n- 天坛", answer)
+        self.assertNotIn("Action:", answer)
+        self.assertNotIn("Action Input:", answer)
+        self.assertNotIn("weather_query", answer)
+
+    def test_markdown_wrapped_final_answer_marker_is_not_answer_content(self):
+        parser = StreamParser()
+
+        results = [
+            parser.parse_chunk("**Final Answer:** 以下是结果"),
+            parser.parse_chunk("\n\n### 北京推荐"),
+        ]
+        answer = "".join(
+            result["content"]
+            for result in results
+            if result and result["event"] == "answer_chunk"
+        )
+
+        self.assertEqual("以下是结果\n\n### 北京推荐", answer)
+        self.assertNotIn("Final Answer", answer)
+        self.assertFalse(answer.startswith("**"))
+
 
 if __name__ == "__main__":
     unittest.main()

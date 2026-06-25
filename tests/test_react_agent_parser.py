@@ -17,3 +17,32 @@ class TolerantReActOutputParserTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MCPToolInputNormalizerTest(unittest.TestCase):
+    def test_weather_query_extracts_json_wrapped_inside_query(self):
+        from pkg.agent_tools_mcp.mcp_manager import normalize_mcp_tool_arguments
+
+        args = normalize_mcp_tool_arguments(
+            "weather_query",
+            {
+                "query": '** {"city": "北京", "extensions": "all"}'
+            },
+        )
+
+        self.assertEqual({"city": "北京", "extensions": "all"}, args)
+
+    def test_weather_query_uses_beijing_from_plain_text_query(self):
+        from pkg.agent_tools_mcp.mcp_manager import normalize_mcp_tool_arguments
+
+        args = normalize_mcp_tool_arguments("weather_query", {"query": "查询北京明天天气"})
+
+        self.assertEqual({"city": "北京", "extensions": "all"}, args)
+
+    def test_web_search_keeps_query_and_defaults(self):
+        from pkg.agent_tools_mcp.mcp_manager import normalize_mcp_tool_arguments
+
+        args = normalize_mcp_tool_arguments("web_search", {"query": "北京好玩的地方"})
+
+        self.assertEqual("北京好玩的地方", args["query"])
+        self.assertEqual(5, args["max_results"])

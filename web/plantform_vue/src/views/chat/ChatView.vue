@@ -133,6 +133,7 @@
 import { ref, computed, nextTick, onMounted, onActivated, onDeactivated, watch, defineOptions } from 'vue'
 import { useUserStore, useChatStore } from '@/store'
 import { sendMessageStreamWithOptions, getContextUsage } from '@/api'
+import { applyAgentManifest, applyAgentProcess } from '@/utils/agentProcess'
 import { ElMessage } from 'element-plus'
 import { ChatDotRound } from '@element-plus/icons-vue'
 
@@ -307,7 +308,7 @@ const openContextUsage = async () => {
 }
 
 // 发送消息（SSE 流式）
-const handleSendMessage = async ({ content, showThinking, files = [], location = null, skipCache = false, regenerateMessageId = null }) => {
+const handleSendMessage = async ({ content, showThinking, agentMode = chatStore.agentMode, files = [], location = null, skipCache = false, regenerateMessageId = null }) => {
   if (!content.trim()) return
 
   // 添加用户消息
@@ -343,6 +344,8 @@ const handleSendMessage = async ({ content, showThinking, files = [], location =
     thinking: '',
     action: '',
     observation: '',
+    agentManifest: [],
+    agentProcesses: [],
     documents: [],
     create_at: new Date().toISOString()
   }
@@ -359,6 +362,7 @@ const handleSendMessage = async ({ content, showThinking, files = [], location =
       formData.append('session_id', chatStore.currentSessionId)
     }
     formData.append('show_thinking', showThinking ? 'true' : 'false')
+    formData.append('agent_mode', agentMode)
     
     // 如果有位置信息，添加到 FormData（作为 JSON 字符串）
     if (location) {
@@ -476,6 +480,21 @@ const handleSSEEvent = async (eventType, data) => {
           lastMessage.observation += `\n${data.content}`
         }
       }
+      break
+
+    case 'expert_manifest':
+      if (lastMessage) {
+        applyAgentManifest(lastMessage, data)
+      }
+      break
+
+    case 'agent_process':
+      if (lastMessage) {
+        applyAgentProcess(lastMessage, data)
+      }
+      break
+
+    case 'expert_task_status':
       break
       
     case 'answer_chunk':

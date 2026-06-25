@@ -34,6 +34,16 @@
           <span>RAG 评估</span>
         </el-menu-item>
 
+        <el-menu-item index="/admin/prompts">
+          <el-icon><EditPen /></el-icon>
+          <span>Prompt 管理</span>
+        </el-menu-item>
+
+        <el-menu-item index="/admin/agents">
+          <el-icon><Connection /></el-icon>
+          <span>Agent 管理</span>
+        </el-menu-item>
+
         <el-menu-item index="/admin/monitor">
           <el-icon><Monitor /></el-icon>
           <span>系统监控</span>
@@ -58,7 +68,7 @@
 </template>
 
 <script setup>
-import { User, Document, Monitor, DocumentCopy, ChatDotRound, DataAnalysis } from '@element-plus/icons-vue'
+import { User, Document, Monitor, DocumentCopy, ChatDotRound, DataAnalysis, EditPen, Connection } from '@element-plus/icons-vue'
 </script>
 
 <style scoped>

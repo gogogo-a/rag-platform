@@ -4,6 +4,7 @@ ReAct Agent 实现 - LangChain 版本
 """
 from typing import Dict, List, Callable, Any, Optional
 import re
+from datetime import datetime, timedelta
 
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain.agents.output_parsers import ReActSingleInputOutputParser
@@ -267,6 +268,8 @@ class ReActAgent:
     
     def _create_agent(self):
         """创建 LangChain ReAct Agent"""
+        today = datetime.now().date()
+        tomorrow = today + timedelta(days=1)
         # 🔥 优化的 ReAct prompt 模板（中文友好，支持历史记录）
         template = """尽你所能回答以下问题。你可以使用以下工具：
 
@@ -289,6 +292,8 @@ Final Answer: 对原始问题的最终答案
 3. 看到 Observation 后，必须先输出 Thought 再决定下一步
 4. 确定答案后，直接输出 Final Answer
 5. 如果有历史对话，请结合历史上下文理解用户问题
+6. 今天是 {today}，明天是 {tomorrow}；回答相对日期时必须使用这个日期，不要编造其他日期
+7. Final Answer 后只输出给用户看的答案，不要再输出 Thought、Action、Action Input、Observation
 
 {chat_history}
 
@@ -296,6 +301,7 @@ Final Answer: 对原始问题的最终答案
 
 Question: {input}
 Thought:{agent_scratchpad}"""
+        template = template.replace("{today}", today.isoformat()).replace("{tomorrow}", tomorrow.isoformat())
         
         prompt = PromptTemplate.from_template(template)
         

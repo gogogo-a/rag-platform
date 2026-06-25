@@ -5,7 +5,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from log import logger
-from pkg.utils.return_logger import get_database_duration_summary, reset_database_duration
+from pkg.utils.return_logger import (
+    get_database_duration_summary,
+    reset_database_duration,
+    truncate_log_text,
+)
 
 
 SKIP_PATH_PREFIXES = ("/uploads/",)
@@ -38,7 +42,7 @@ class ReturnLoggingMiddleware(BaseHTTPMiddleware):
         async for chunk in response.body_iterator:
             body += chunk
 
-        body_text = body.decode(response.charset or "utf-8", errors="replace")
+        body_text = truncate_log_text(body.decode(response.charset or "utf-8", errors="replace"))
         record = {
             "method": request.method,
             "path": request.url.path,

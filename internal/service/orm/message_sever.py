@@ -64,6 +64,7 @@ class MessageService:
         file_content: Optional[str] = None,
         file_bytes: Optional[bytes] = None,
         show_thinking: bool = False,
+        agent_mode: str = "single",
         location: Optional[str] = None,
         skip_cache: bool = False,
         regenerate_message_id: Optional[str] = None
@@ -83,6 +84,7 @@ class MessageService:
             file_content: 文档文件内容（已解析）
             file_bytes: 图片文件字节流（未解析）
             show_thinking: 是否显示思考过程
+            agent_mode: Agent 模式
             location: 用户位置信息
             skip_cache: 是否跳过缓存（重新回答时使用）
             regenerate_message_id: 重新生成时的原消息ID（用于删除旧缓存）
@@ -203,9 +205,16 @@ class MessageService:
             # 6. 流式生成 AI 回复
             ai_reply_full = ""
             extra_data = {
+                "question_id": None,
                 "thoughts": [],
                 "actions": [],
                 "observations": [],
+                "agent_manifest": [],
+                "agent_processes": [],
+                "expert_tasks": [],
+                "expert_results": [],
+                "dead_letter_tasks": [],
+                "experience_chain_id": None,
                 "documents": [],
                 "rag_results": [],
                 "usage": {}
@@ -229,7 +238,8 @@ class MessageService:
             async for event_dict in ai_reply_service.generate_reply_stream(
                 session_id, user_id, ai_input_content, history, user_permission,
                 original_question=content,  # 传递原始问题用于相似问题检索
-                skip_cache=skip_cache  # 传递跳过缓存标志
+                skip_cache=skip_cache,  # 传递跳过缓存标志
+                agent_mode=agent_mode
             ):
                 event_type = event_dict.get("event", "message")
                 event_data = event_dict.get("data", {})
@@ -270,6 +280,49 @@ class MessageService:
                     extra_data["observations"].append(event_content)
                     if show_thinking:
                         yield event_dict
+
+                elif event_type == "expert_manifest":
+                    experts = event_data.get("experts", [])
+                    if isinstance(experts, list):
+                        extra_data["agent_manifest"] = experts
+                    if show_thinking:
+                        yield event_dict
+
+                elif event_type == "agent_process":
+                    if event_data.get("content"):
+                        extra_data["agent_processes"].append(event_data)
+                    if show_thinking:
+                        yield event_dict
+
+                elif event_type == "expert_question":
+                    extra_data["question_id"] = event_data.get("question_id")
+
+                elif event_type == "expert_task_status":
+                    status = event_data.get("status")
+                    task_record = {
+                        "question_id": event_data.get("question_id"),
+                        "task_id": event_data.get("task_id"),
+                        "expert_key": event_data.get("expert_key"),
+                        "status": status,
+                        "message": event_data.get("message", "")
+                    }
+                    extra_data["expert_tasks"].append(task_record)
+                    result = event_data.get("result") or {}
+                    if status == "completed" and result:
+                        extra_data["expert_results"].append({
+                            **task_record,
+                            **result
+                        })
+                    elif status == "dead_letter":
+                        extra_data["dead_letter_tasks"].append({
+                            **task_record,
+                            **result
+                        })
+                    if show_thinking:
+                        yield event_dict
+
+                elif event_type == "expert_experience":
+                    extra_data["experience_chain_id"] = event_data.get("experience_chain_id")
                         
                 elif event_type == "answer_chunk":
                     if answer_start is None:
@@ -317,13 +370,26 @@ class MessageService:
             # 7. 保存 AI 消息
             if ai_reply_full:
                 final_extra_data = {
+                    "question_id": extra_data["question_id"],
                     "documents": extra_data["documents"],
                     "thoughts": extra_data["thoughts"],
                     "actions": extra_data["actions"],
                     "observations": extra_data["observations"]
                 }
+                if extra_data["agent_manifest"]:
+                    final_extra_data["agent_manifest"] = extra_data["agent_manifest"]
+                if extra_data["agent_processes"]:
+                    final_extra_data["agent_processes"] = extra_data["agent_processes"]
                 if extra_data["usage"]:
                     final_extra_data["usage"] = extra_data["usage"]
+                if extra_data["expert_tasks"]:
+                    final_extra_data["expert_tasks"] = extra_data["expert_tasks"]
+                if extra_data["expert_results"]:
+                    final_extra_data["expert_results"] = extra_data["expert_results"]
+                if extra_data["dead_letter_tasks"]:
+                    final_extra_data["dead_letter_tasks"] = extra_data["dead_letter_tasks"]
+                if extra_data["experience_chain_id"]:
+                    final_extra_data["experience_chain_id"] = extra_data["experience_chain_id"]
 
                 ai_msg = await message_crud_service.save_ai_message(
                     session_id, 

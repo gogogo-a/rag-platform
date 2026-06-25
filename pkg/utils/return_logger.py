@@ -9,6 +9,8 @@ from uuid import UUID
 from log import logger
 
 
+MAX_LOG_TEXT_LENGTH = 400
+
 _database_duration_stats: ContextVar[dict] = ContextVar(
     "database_duration_stats",
     default={"database_duration_ms": 0.0, "database_query_count": 0},
@@ -63,5 +65,19 @@ def to_json_text(value: Any) -> str:
     return json.dumps(_to_plain_value(value), ensure_ascii=False, default=str)
 
 
+def compact_json_text(value: Any) -> str:
+    return json.dumps(_to_plain_value(value), ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def truncate_log_text(text: str, max_length: int = MAX_LOG_TEXT_LENGTH) -> str:
+    if len(text) <= max_length:
+        return text
+    return f"{text[:max_length]}..."
+
+
+def to_log_text(value: Any) -> str:
+    return truncate_log_text(compact_json_text(value))
+
+
 def log_database_return(source: str, value: Any) -> None:
-    logger.info(f"数据库返回 {source}: {to_json_text(value)}")
+    logger.info(f"数据库返回 {source}: {to_log_text(value)}")

@@ -12,6 +12,7 @@ from internal.db.mongodb import init_mongodb, close_mongodb
 from internal.db.qdrant import qdrant_client, qa_qdrant_client
 from internal.db.redis import redis_client  # 直接导入全局单例实例
 from internal.document_client.document_processor import document_processor
+from internal.agent.expert_consumers import start_expert_consumers, stop_expert_consumers
 from internal.service.evaluation.rag_evaluation_consumer import start_rag_evaluation_consumer
 from internal.http_sever.app import create_app
 from internal.monitor import start_resource_monitoring, stop_resource_monitoring
@@ -90,6 +91,14 @@ async def lifespan(app: FastAPI):
         logger.info("🔌 正在启动 MCP 工具服务...")
         await mcp_manager.start_all()
         logger.info("✓ MCP 工具服务已启动")
+
+        # ==================== 启动专家协作服务 ====================
+        logger.info("🤝 正在启动专家协作服务...")
+        start_expert_consumers(
+            llm_service=None,
+            tool_map=mcp_manager.get_tool_map(),
+        )
+        logger.info("✓ 专家协作服务已启动")
         
         logger.info("=" * 80)
         logger.info("✅ 所有服务启动完成")
@@ -127,6 +136,12 @@ async def lifespan(app: FastAPI):
             stop_resource_monitoring()
         except Exception as e:
             logger.error(f"停止资源监控失败: {e}")
+
+        try:
+            stop_expert_consumers()
+            logger.info("✓ 专家协作服务已停止")
+        except Exception as e:
+            logger.error(f"停止专家协作服务失败: {e}")
         
         try:
             await mcp_manager.stop_all()

@@ -146,8 +146,23 @@ QA_CACHE_TTL = int(os.getenv("QA_CACHE_TTL", str(7 * 24 * 3600)))
 # Agent 类型：react（传统 ReAct）或 langgraph（LangGraph 状态图）
 AGENT_TYPE = os.getenv("AGENT_TYPE", "react")  # react | langgraph
 
+# Agent 模式：single（单一 Agent）或 expert（专家模式）
+AGENT_MODE = os.getenv("AGENT_MODE", "single").lower()
+
 # Agent 最大迭代次数
 AGENT_MAX_ITERATIONS = int(os.getenv("AGENT_MAX_ITERATIONS", "5"))
 
 # Agent 错误恢复最大重试次数
 AGENT_MAX_RETRIES = int(os.getenv("AGENT_MAX_RETRIES", "2"))
+
+# 专家模式主控最大调用轮数
+EXPERT_MAX_STEPS = int(os.getenv("EXPERT_MAX_STEPS", "3"))
+
+# 专家模式子 Agent 可见历史条数
+EXPERT_CONTEXT_HISTORY_COUNT = int(os.getenv("EXPERT_CONTEXT_HISTORY_COUNT", "5"))
+
+# 专家任务最大失败重试次数
+EXPERT_TASK_MAX_RETRIES = int(os.getenv("EXPERT_TASK_MAX_RETRIES", "5"))
+
+# 第一版保持串行编排，后续再打开并行
+EXPERT_PARALLEL_ENABLED = os.getenv("EXPERT_PARALLEL_ENABLED", "false").lower() == "true"

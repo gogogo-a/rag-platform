@@ -4,6 +4,7 @@
 """
 from typing import Dict, Any, Optional, List
 from enum import Enum
+import re
 from log import logger
 
 
@@ -32,6 +33,7 @@ class StreamParser:
 
     _MARKERS = ("Thought:", "Action:", "Action Input:", "Observation:", "Answer:", "Final Answer:")
     _CONTROL_MARKERS = ("Action:", "Action Input:", "Observation:", "Answer:", "Final Answer:")
+    _MARKER_PATTERN = re.compile(r"(\*\*)?\s*(Thought|Action Input|Action|Observation|Final Answer|Answer)\s*:\s*(\*\*)?")
     
     def reset(self):
         """重置解析器状态"""
@@ -84,7 +86,7 @@ class StreamParser:
             return None
 
         if self.state == ParseState.IDLE and self._is_plain_answer_buffer():
-            if self._looks_like_unmarked_reasoning(self.buffer):
+            if self._looks_like_unmarked_reasoning(self.buffer) or self._looks_like_react_trace(self.buffer):
                 self.state = ParseState.THOUGHT
                 event_type = "thought"
             else:
@@ -95,6 +97,8 @@ class StreamParser:
             answer_content = self.buffer.lstrip()
             self.buffer = ""
             if answer_content:
+                if event_type == "thought" and self._looks_like_react_trace(answer_content):
+                    return None
                 return {
                     "event": event_type,
                     "content": answer_content
@@ -112,6 +116,7 @@ class StreamParser:
     def _looks_like_unmarked_reasoning(self, text: str) -> bool:
         stripped = text.lstrip()
         reasoning_phrases = (
+            "好的",
             "需要检索",
             "需要先检索",
             "需要查询",
@@ -128,19 +133,26 @@ class StreamParser:
         )
         return any(phrase in stripped for phrase in reasoning_phrases)
 
+    def _looks_like_react_trace(self, text: str) -> bool:
+        return any(marker in text for marker in ("Thought:", "Action:", "Action Input:", "Observation:"))
+
     def _could_be_marker_prefix(self, text: str) -> bool:
         return any(marker.startswith(text) for marker in self._MARKERS)
 
     def _find_next_marker(self) -> Optional[tuple[int, str]]:
-        matches = [
-            (self.buffer.find(marker), marker)
-            for marker in self._MARKERS
-            if self.buffer.find(marker) != -1
-        ]
-        matches = [match for match in matches if match[0] >= 0]
-        if not matches:
+        match = self._MARKER_PATTERN.search(self.buffer)
+        if not match:
             return None
-        return min(matches, key=lambda item: item[0])
+        return match.start(), f"{match.group(2)}:"
+
+    def _consume_marker(self, marker_name: str) -> None:
+        match = self._MARKER_PATTERN.match(self.buffer)
+        if match and match.group(2) == marker_name:
+            self.buffer = self.buffer[match.end():]
+            return
+        marker = f"{marker_name}:"
+        if self.buffer.startswith(marker):
+            self.buffer = self.buffer[len(marker):]
 
     def _take_thought_before_marker(self, marker_index: int) -> Optional[Dict[str, Any]]:
         thought = self.buffer[:marker_index].strip()
@@ -177,7 +189,7 @@ class StreamParser:
         # 检测 Thought:
         if marker == "Thought:":
             self.state = ParseState.THOUGHT
-            self.buffer = self.buffer[len("Thought:"):]
+            self._consume_marker("Thought")
             self.current_content = ""
             self._state_changed = True
             return None
@@ -185,7 +197,7 @@ class StreamParser:
         # 检测 Action 或 Action Input:
         if marker in {"Action:", "Action Input:"}:
             self.state = ParseState.ACTION
-            self.buffer = self.buffer[len(marker):]
+            self._consume_marker(marker.rstrip(":"))
             self.current_content = ""
             self._state_changed = True
             return None
@@ -193,7 +205,7 @@ class StreamParser:
         # 检测 Observation:
         if marker == "Observation:":
             self.state = ParseState.OBSERVATION
-            self.buffer = self.buffer[len("Observation:"):]
+            self._consume_marker("Observation")
             self.current_content = ""
             self._state_changed = True
             return None
@@ -205,7 +217,8 @@ class StreamParser:
             self._state_changed = True
             
             # 提取 Answer: 后面的内容
-            answer_content = self.buffer[len(marker):].lstrip()
+            self._consume_marker(marker.rstrip(":"))
+            answer_content = self.buffer.lstrip()
             self.buffer = ""
             self.current_content = ""
             
@@ -269,6 +282,14 @@ class StreamParser:
             return None
         
         elif self.state == ParseState.ANSWER:
+            marker_match = self._find_next_marker()
+            if marker_match and marker_match[1] in {"Thought:", "Action:", "Action Input:", "Observation:"}:
+                result = self._detect_state_change()
+                if result:
+                    return result
+                if self._pending_events:
+                    return self._pending_events.pop(0)
+                return None
             self.current_content += chunk
             return {
                 "event": "answer_chunk",

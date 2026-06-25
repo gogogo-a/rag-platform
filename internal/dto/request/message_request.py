@@ -18,4 +18,4 @@ class SendMessageRequest(BaseModel):
     file_name: Optional[str] = Field(None, description="文件名")
     file_size: Optional[str] = Field(None, description="文件大小")
     show_thinking: bool = Field(default=False, description="是否显示思考过程（启用后流式返回）")
-
+    agent_mode: str = Field(default="single", description="Agent 模式：single 或 expert")

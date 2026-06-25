@@ -16,6 +16,13 @@
     </div>
 
     <div class="input-toolbar">
+      <el-segmented
+        v-model="selectedAgentMode"
+        :options="agentModeOptions"
+        size="small"
+        class="agent-mode-toggle"
+      />
+
       <el-tooltip :content="showThinking ? '隐藏过程' : '显示过程'" placement="top">
         <el-button
           text
@@ -23,13 +30,13 @@
           @click="handleToggleThinking"
           size="small"
           :class="{ 'thinking-active': showThinking }"
-          class="thinking-button"
+          class="toolbar-button thinking-button"
         >
           {{ showThinking ? '隐藏过程' : '显示过程' }}
         </el-button>
       </el-tooltip>
 
-      <el-button text :icon="Upload" size="small" @click="handleSelectFile">
+      <el-button text :icon="Upload" size="small" class="toolbar-button upload-button" @click="handleSelectFile">
         上传文件
       </el-button>
       <input
@@ -104,6 +111,14 @@ const isDragging = ref(false) // 拖拽状态
 const userLocation = ref(null) // 用户位置信息
 const isComposing = ref(false) // 输入法状态（是否正在输入中文）
 const showThinking = computed(() => chatStore.showThinking)
+const selectedAgentMode = computed({
+  get: () => chatStore.agentMode,
+  set: (mode) => chatStore.setAgentMode(mode)
+})
+const agentModeOptions = [
+  { label: '普通模式', value: 'single' },
+  { label: '专家模式', value: 'expert' }
+]
 
 // 获取用户位置信息
 const getUserLocation = () => {
@@ -206,6 +221,7 @@ const handleSend = async () => {
     await emit('send', {
       content: message,
       showThinking: chatStore.showThinking,
+      agentMode: chatStore.agentMode,
       files: files, // 传递文件列表
       location: location // 传递位置信息
     })
@@ -425,19 +441,73 @@ defineExpose({
   margin-bottom: 8px;
 }
 
-.thinking-button {
-  transition: all 0.3s ease;
-  padding: 6px 10px;
+.toolbar-button {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 8px;
+  background: var(--bg-tertiary) !important;
+  color: var(--text-secondary) !important;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.toolbar-button:hover {
+  border-color: rgba(129, 140, 248, 0.45) !important;
+  background: rgba(99, 102, 241, 0.12) !important;
+  color: var(--text-primary) !important;
+}
+
+.toolbar-button :deep(.el-icon) {
+  font-size: 14px;
+}
+
+.agent-mode-toggle {
+  --el-segmented-bg-color: var(--bg-tertiary);
+  --el-segmented-item-selected-bg-color: rgba(99, 102, 241, 0.22);
+  --el-segmented-item-selected-color: var(--primary-hover);
+  --el-segmented-item-hover-bg-color: rgba(99, 102, 241, 0.12);
+  --el-border-radius-base: 6px;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  height: 30px;
+}
+
+.agent-mode-toggle :deep(.el-segmented__item) {
+  min-width: 72px;
+  height: 24px;
+  padding: 0 10px;
+  color: var(--text-secondary);
   border-radius: 6px;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.agent-mode-toggle :deep(.el-segmented__item-label) {
+  font-size: 13px;
+  line-height: 24px;
+  font-weight: 500;
+}
+
+.agent-mode-toggle :deep(.el-segmented__item-selected) {
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px rgba(129, 140, 248, 0.35);
+}
+
+.thinking-button {
+  min-width: 78px;
 }
 
 .thinking-button.thinking-active {
-  background: rgba(168, 85, 247, 0.2) !important;
-  color: var(--neon-purple) !important;
+  border-color: rgba(129, 140, 248, 0.45) !important;
+  background: rgba(99, 102, 241, 0.22) !important;
+  color: var(--text-primary) !important;
 }
 
 .thinking-button.thinking-active:hover {
-  background: rgba(168, 85, 247, 0.3) !important;
+  background: rgba(99, 102, 241, 0.28) !important;
 }
 
 .input-container {
