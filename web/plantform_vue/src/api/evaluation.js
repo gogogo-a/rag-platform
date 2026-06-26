@@ -46,6 +46,36 @@ export function getEvaluationCases(params) {
   })
 }
 
+export function createEvaluationCase(data) {
+  return request({
+    url: '/evaluations/cases',
+    method: 'post',
+    data
+  })
+}
+
+export function getEvaluationCase(caseId) {
+  return request({
+    url: `/evaluations/cases/${caseId}`,
+    method: 'get'
+  })
+}
+
+export function updateEvaluationCase(caseId, data) {
+  return request({
+    url: `/evaluations/cases/${caseId}`,
+    method: 'patch',
+    data
+  })
+}
+
+export function deleteEvaluationCase(caseId) {
+  return request({
+    url: `/evaluations/cases/${caseId}`,
+    method: 'delete'
+  })
+}
+
 export function runEvaluationCase(caseId, data = {}) {
   return request({
     url: `/evaluations/cases/${caseId}/run`,

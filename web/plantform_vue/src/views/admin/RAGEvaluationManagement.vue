@@ -30,6 +30,7 @@
       </div>
       <div v-else class="header-actions">
         <el-segmented v-model="caseSuiteType" :options="caseSuiteOptions" @change="fetchCases" />
+        <el-button type="primary" @click="openCreateCase">新增测试集</el-button>
         <el-button :icon="RefreshRight" @click="fetchCases">刷新</el-button>
       </div>
     </div>
@@ -76,8 +77,10 @@
         <el-table-column label="最低分" width="90">
           <template #default="{ row }">{{ formatScore(row.min_score) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
+            <el-button text type="primary" size="small" @click="openCaseDetail(row)">详情</el-button>
+            <el-button text type="primary" size="small" @click="openEditCase(row)">编辑</el-button>
             <el-button
               text
               type="primary"
@@ -87,6 +90,7 @@
             >
               执行
             </el-button>
+            <el-button text type="danger" size="small" @click="handleDeleteCase(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -275,6 +279,99 @@
         <el-button @click="showDetailDialog = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="showCaseDetailDialog" title="测试集详情" width="760px">
+      <div v-if="caseDetailData" class="detail-content">
+        <div class="score-list">
+          <span>名称：{{ caseDetailData.name }}</span>
+          <span>分类：{{ suiteTypeText(caseDetailData.suite_type) }}</span>
+          <span>模式：{{ caseDetailData.agent_mode === 'expert' ? '专家' : '普通' }}</span>
+          <span>最低分：{{ formatScore(caseDetailData.min_score) }}</span>
+        </div>
+        <div class="detail-section">
+          <h4>目标</h4>
+          <p>{{ caseTargetText(caseDetailData) }}</p>
+        </div>
+        <div class="detail-section">
+          <h4>说明</h4>
+          <p>{{ caseDetailData.description || '暂无说明' }}</p>
+        </div>
+        <div class="detail-section">
+          <h4>测试轮次</h4>
+          <p>{{ caseTurnsText(caseDetailData.turns) }}</p>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showCaseDetailDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showCaseFormDialog" :title="caseFormMode === 'create' ? '新增测试集' : '编辑测试集'" width="820px">
+      <div class="case-form">
+        <div class="case-form-grid">
+          <label>
+            <span>测试集标识</span>
+            <el-input v-model="caseForm.case_id" :disabled="caseFormMode === 'edit'" placeholder="mcp:tool_name" />
+          </label>
+          <label>
+            <span>名称</span>
+            <el-input v-model="caseForm.name" placeholder="测试集名称" />
+          </label>
+          <label>
+            <span>分类</span>
+            <el-select v-model="caseForm.suite_type">
+              <el-option label="MCP" value="mcp" />
+              <el-option label="Agent" value="agent" />
+              <el-option label="组合流程" value="flow" />
+            </el-select>
+          </label>
+          <label>
+            <span>模式</span>
+            <el-select v-model="caseForm.agent_mode">
+              <el-option label="普通" value="single" />
+              <el-option label="专家" value="expert" />
+            </el-select>
+          </label>
+          <label>
+            <span>目标专家</span>
+            <el-input v-model="caseForm.target_agent" placeholder="可留空" />
+          </label>
+          <label>
+            <span>最低分</span>
+            <el-input-number v-model="caseForm.min_score" :min="0" :max="1" :step="0.05" controls-position="right" />
+          </label>
+        </div>
+        <label class="case-form-row">
+          <span>目标能力</span>
+          <el-input v-model="caseForm.requiredToolsText" placeholder="多个能力用逗号分隔" />
+        </label>
+        <label class="case-form-row">
+          <span>拦截词</span>
+          <el-input v-model="caseForm.blockedTermsText" placeholder="多个词用逗号分隔" />
+        </label>
+        <label class="case-form-row">
+          <span>说明</span>
+          <el-input v-model="caseForm.description" type="textarea" :rows="2" />
+        </label>
+        <div class="turn-editor">
+          <div class="turn-editor-header">
+            <span>测试轮次</span>
+            <el-button size="small" @click="addCaseTurn">添加轮次</el-button>
+          </div>
+          <div v-for="(turn, index) in caseForm.turns" :key="index" class="turn-row">
+            <span>{{ index + 1 }}</span>
+            <el-input v-model="turn.content" type="textarea" :rows="2" placeholder="用户问题" />
+            <el-input v-model="turn.requiredToolsText" placeholder="本轮目标能力，可留空" />
+            <el-button text type="danger" @click="removeCaseTurn(index)">删除</el-button>
+          </div>
+        </div>
+        <el-checkbox v-model="caseForm.enabled">启用</el-checkbox>
+      </div>
+      <template #footer>
+        <el-button @click="showCaseFormDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveCaseForm">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -283,11 +380,14 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { RefreshRight, Search } from '@element-plus/icons-vue'
 import {
+  createEvaluationCase,
+  deleteEvaluationCase,
   getEvaluationCases,
   getEvaluationList,
   getRAGEvaluationConfig,
   requeueRAGEvaluation,
   runEvaluationCase,
+  updateEvaluationCase,
   updateRAGEvaluationConfig
 } from '@/api'
 import CustomPagination from '@/components/public/CustomPagination.vue'
@@ -306,9 +406,14 @@ const statusFilter = ref('')
 const activeType = ref('rag')
 const showDetailDialog = ref(false)
 const detailData = ref(null)
+const showCaseDetailDialog = ref(false)
+const showCaseFormDialog = ref(false)
+const caseDetailData = ref(null)
+const caseFormMode = ref('create')
 const caseSuiteType = ref('')
 const runningCaseId = ref('')
 const lastCaseRun = ref(null)
+const caseForm = ref(createEmptyCaseForm())
 const caseSuiteOptions = [
   { label: '全部', value: '' },
   { label: 'MCP', value: 'mcp' },
@@ -452,6 +557,61 @@ const handleRunCase = async (row) => {
   }
 }
 
+const openCaseDetail = (row) => {
+  caseDetailData.value = row
+  showCaseDetailDialog.value = true
+}
+
+const openCreateCase = () => {
+  caseFormMode.value = 'create'
+  caseForm.value = createEmptyCaseForm()
+  showCaseFormDialog.value = true
+}
+
+const openEditCase = (row) => {
+  caseFormMode.value = 'edit'
+  caseForm.value = caseToForm(row)
+  showCaseFormDialog.value = true
+}
+
+const saveCaseForm = async () => {
+  const payload = formToCasePayload(caseForm.value)
+  if (!payload.case_id || !payload.name || !payload.turns.length) {
+    ElMessage.error('请填写测试集标识、名称和测试轮次')
+    return
+  }
+  try {
+    if (caseFormMode.value === 'create') {
+      await createEvaluationCase(payload)
+    } else {
+      await updateEvaluationCase(caseForm.value.original_case_id, payload)
+    }
+    ElMessage.success('保存成功')
+    showCaseFormDialog.value = false
+    fetchCases()
+  } catch (error) {
+    ElMessage.error('保存失败')
+  }
+}
+
+const handleDeleteCase = async (row) => {
+  try {
+    await deleteEvaluationCase(row.case_id)
+    ElMessage.success('删除成功')
+    fetchCases()
+  } catch (error) {
+    ElMessage.error('删除失败')
+  }
+}
+
+const addCaseTurn = () => {
+  caseForm.value.turns.push({ content: '', requiredToolsText: '' })
+}
+
+const removeCaseTurn = (index) => {
+  caseForm.value.turns.splice(index, 1)
+}
+
 const changeType = (type) => {
   activeType.value = type
   currentPage.value = 1
@@ -518,6 +678,71 @@ const navCount = (value) => {
   if (value === 'cases') return cases.value.length
   return summary.value.type_counts?.[value] || 0
 }
+
+function createEmptyCaseForm() {
+  return {
+    original_case_id: '',
+    case_id: '',
+    name: '',
+    suite_type: 'mcp',
+    agent_mode: 'single',
+    target_agent: '',
+    requiredToolsText: '',
+    blockedTermsText: '',
+    turns: [{ content: '', requiredToolsText: '' }],
+    min_score: 0.8,
+    enabled: true,
+    description: ''
+  }
+}
+
+const caseToForm = (row) => ({
+  original_case_id: row.case_id,
+  case_id: row.case_id,
+  name: row.name,
+  suite_type: row.suite_type || 'mcp',
+  agent_mode: row.agent_mode || 'single',
+  target_agent: row.target_agent || '',
+  requiredToolsText: listToText(row.required_tools),
+  blockedTermsText: listToText(row.blocked_terms),
+  turns: (row.turns || []).map((turn) => ({
+    content: turn.content || '',
+    requiredToolsText: listToText(turn.required_tools)
+  })),
+  min_score: Number(row.min_score || 0.8),
+  enabled: row.enabled !== false,
+  description: row.description || ''
+})
+
+const formToCasePayload = (form) => ({
+  case_id: form.case_id,
+  name: form.name,
+  suite_type: form.suite_type,
+  agent_mode: form.agent_mode,
+  target_agent: form.target_agent,
+  required_tools: textToList(form.requiredToolsText),
+  blocked_terms: textToList(form.blockedTermsText),
+  turns: form.turns
+    .map((turn) => ({
+      content: (turn.content || '').trim(),
+      required_tools: textToList(turn.requiredToolsText)
+    }))
+    .filter((turn) => turn.content),
+  min_score: Number(form.min_score || 0),
+  enabled: form.enabled,
+  description: form.description
+})
+
+const textToList = (value) => String(value || '')
+  .split(/[,，\n]/)
+  .map((item) => item.trim())
+  .filter(Boolean)
+
+const listToText = (value) => Array.isArray(value) ? value.join(', ') : ''
+
+const caseTurnsText = (turns = []) => turns
+  .map((turn, index) => `${index + 1}. ${turn.content || ''}`)
+  .join('\n')
 
 const statusText = (status) => {
   const map = {
@@ -682,6 +907,58 @@ watch(
   margin-top: 12px;
   color: var(--text-secondary);
   font-size: 13px;
+}
+
+.case-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.case-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.case-form label,
+.case-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.case-form :deep(.el-select),
+.case-form :deep(.el-input-number) {
+  width: 100%;
+}
+
+.turn-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.turn-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.turn-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1.5fr) minmax(160px, 0.7fr) 56px;
+  gap: 10px;
+  align-items: center;
+}
+
+.turn-row > span {
+  color: var(--text-secondary);
+  text-align: center;
 }
 
 .config-panel {

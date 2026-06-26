@@ -49,10 +49,15 @@ class FakeCaseModel:
         self.__dict__.update(kwargs)
         self.id = kwargs.get("case_id")
         self.insert = AsyncMock(side_effect=self._insert)
+        self.save = AsyncMock()
+        self.delete = AsyncMock(side_effect=self._delete)
 
     async def _insert(self):
         FakeCaseModel.records.append(self)
         FakeCaseModel.created.append(self)
+
+    async def _delete(self):
+        FakeCaseModel.records = [item for item in FakeCaseModel.records if item is not self]
 
     @classmethod
     def find(cls, *_conditions):
@@ -130,6 +135,94 @@ class ConversationRegressionServiceTest(unittest.TestCase):
 
         self.assertEqual(created, len(DEFAULT_REGRESSION_CASES) - 1)
         self.assertEqual(len({case.case_id for case in FakeCaseModel.records}), len(DEFAULT_REGRESSION_CASES))
+
+    def test_create_case_adds_custom_case(self):
+        service = ConversationRegressionService(
+            case_model=FakeCaseModel,
+            evaluation_model=FakeEvaluationRecord,
+            message_service=FakeMessageService(),
+            llm_quality_evaluator=FakeQualityEvaluator(),
+        )
+
+        data = asyncio.run(service.create_case({
+            "case_id": "mcp:stock_query",
+            "name": "股票查询",
+            "suite_type": "mcp",
+            "agent_mode": "single",
+            "required_tools": ["stock_query"],
+            "turns": [{"content": "帮我查询苹果公司的股价情况。"}],
+            "min_score": 0.82,
+            "enabled": True,
+            "description": "验证股票查询能力",
+        }))
+
+        self.assertEqual(data["case_id"], "mcp:stock_query")
+        self.assertEqual(data["required_tools"], ["stock_query"])
+        self.assertEqual(data["turn_count"], 1)
+        self.assertEqual(len(FakeCaseModel.records), 1)
+
+    def test_create_case_rejects_duplicate_case_id(self):
+        FakeCaseModel.records = [FakeCaseModel(**DEFAULT_REGRESSION_CASES[0])]
+        service = ConversationRegressionService(
+            case_model=FakeCaseModel,
+            evaluation_model=FakeEvaluationRecord,
+            message_service=FakeMessageService(),
+            llm_quality_evaluator=FakeQualityEvaluator(),
+        )
+
+        with self.assertRaises(ValueError):
+            asyncio.run(service.create_case(DEFAULT_REGRESSION_CASES[0]))
+
+    def test_update_case_changes_editable_fields(self):
+        case = FakeCaseModel(**DEFAULT_REGRESSION_CASES[0])
+        FakeCaseModel.records = [case]
+        service = ConversationRegressionService(
+            case_model=FakeCaseModel,
+            evaluation_model=FakeEvaluationRecord,
+            message_service=FakeMessageService(),
+            llm_quality_evaluator=FakeQualityEvaluator(),
+        )
+
+        data = asyncio.run(service.update_case("mcp:knowledge_search", {
+            "name": "知识检索回归",
+            "min_score": 0.9,
+            "turns": [{"content": "新的问题"}],
+        }))
+
+        self.assertEqual(data["name"], "知识检索回归")
+        self.assertEqual(data["min_score"], 0.9)
+        self.assertEqual(data["turn_count"], 1)
+        case.save.assert_awaited_once()
+
+    def test_delete_case_removes_case(self):
+        case = FakeCaseModel(**DEFAULT_REGRESSION_CASES[0])
+        FakeCaseModel.records = [case]
+        service = ConversationRegressionService(
+            case_model=FakeCaseModel,
+            evaluation_model=FakeEvaluationRecord,
+            message_service=FakeMessageService(),
+            llm_quality_evaluator=FakeQualityEvaluator(),
+        )
+
+        result = asyncio.run(service.delete_case("mcp:knowledge_search"))
+
+        self.assertTrue(result)
+        self.assertEqual(FakeCaseModel.records, [])
+        case.delete.assert_awaited_once()
+
+    def test_get_case_returns_serialized_detail(self):
+        FakeCaseModel.records = [FakeCaseModel(**DEFAULT_REGRESSION_CASES[0])]
+        service = ConversationRegressionService(
+            case_model=FakeCaseModel,
+            evaluation_model=FakeEvaluationRecord,
+            message_service=FakeMessageService(),
+            llm_quality_evaluator=FakeQualityEvaluator(),
+        )
+
+        data = asyncio.run(service.get_case("mcp:knowledge_search"))
+
+        self.assertEqual(data["case_id"], "mcp:knowledge_search")
+        self.assertGreaterEqual(data["turn_count"], 1)
 
     def test_run_case_reuses_session_and_writes_scores_for_each_turn(self):
         case = FakeCaseModel(

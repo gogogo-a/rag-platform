@@ -1,7 +1,7 @@
 """评估管理 API。"""
 from fastapi import APIRouter, Query, Path
 from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from api.v1.response_controller import json_response
 from internal.service.evaluation import RAGEvaluationService
@@ -24,6 +24,20 @@ class RAGEvaluationConfigRequest(BaseModel):
 class RunEvaluationCaseRequest(BaseModel):
     user_id: Optional[str] = None
     send_name: Optional[str] = None
+
+
+class EvaluationCaseRequest(BaseModel):
+    case_id: Optional[str] = None
+    name: Optional[str] = None
+    suite_type: Optional[str] = None
+    agent_mode: Optional[str] = None
+    target_agent: Optional[str] = None
+    required_tools: Optional[List[str]] = None
+    blocked_terms: Optional[List[str]] = None
+    turns: Optional[List[Dict[str, Any]]] = None
+    min_score: Optional[float] = None
+    enabled: Optional[bool] = None
+    description: Optional[str] = None
 
 
 @router.get("", summary="获取评估记录")
@@ -96,6 +110,62 @@ async def get_evaluation_cases(
         return json_response("查询成功", 0, data)
     except Exception as e:
         logger.error(f"获取固定测试集失败: {e}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
+@router.post("/cases", summary="新增固定测试集")
+async def create_evaluation_case(req: EvaluationCaseRequest):
+    try:
+        service = ConversationRegressionService()
+        data = await service.create_case(req.model_dump(exclude_none=True))
+        return json_response("保存成功", 0, data)
+    except ValueError as e:
+        return json_response(str(e), -2)
+    except Exception as e:
+        logger.error(f"新增固定测试集失败: {e}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
+@router.get("/cases/{case_id}", summary="获取固定测试集详情")
+async def get_evaluation_case(case_id: str = Path(..., description="测试集ID")):
+    try:
+        service = ConversationRegressionService()
+        data = await service.get_case(case_id)
+        return json_response("查询成功", 0, data)
+    except ValueError as e:
+        return json_response(str(e), -2)
+    except Exception as e:
+        logger.error(f"获取固定测试集详情失败: {e}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
+@router.patch("/cases/{case_id}", summary="编辑固定测试集")
+async def update_evaluation_case(
+    case_id: str = Path(..., description="测试集ID"),
+    req: EvaluationCaseRequest = None,
+):
+    try:
+        service = ConversationRegressionService()
+        values = req.model_dump(exclude_none=True) if req else {}
+        data = await service.update_case(case_id, values)
+        return json_response("保存成功", 0, data)
+    except ValueError as e:
+        return json_response(str(e), -2)
+    except Exception as e:
+        logger.error(f"编辑固定测试集失败: {e}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
+@router.delete("/cases/{case_id}", summary="删除固定测试集")
+async def delete_evaluation_case(case_id: str = Path(..., description="测试集ID")):
+    try:
+        service = ConversationRegressionService()
+        await service.delete_case(case_id)
+        return json_response("删除成功", 0)
+    except ValueError as e:
+        return json_response(str(e), -2)
+    except Exception as e:
+        logger.error(f"删除固定测试集失败: {e}", exc_info=True)
         return json_response("系统错误", -1)
 
 

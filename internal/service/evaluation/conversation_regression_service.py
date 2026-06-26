@@ -315,6 +315,53 @@ class ConversationRegressionService:
             },
         }
 
+    async def get_case(self, case_id: str) -> Dict[str, Any]:
+        await self.ensure_default_cases()
+        case = await self._get_case(case_id)
+        if not case:
+            raise ValueError("测试集不存在")
+        return self._serialize_case(case)
+
+    async def create_case(self, values: Dict[str, Any]) -> Dict[str, Any]:
+        data = _normalize_case_values(values, require_case_id=True)
+        if await self._get_case(data["case_id"]):
+            raise ValueError("测试集已存在")
+        now = datetime.now()
+        row = self.case_model(
+            **{
+                **data,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        await row.insert()
+        return self._serialize_case(row)
+
+    async def update_case(self, case_id: str, values: Dict[str, Any]) -> Dict[str, Any]:
+        case = await self._get_case(case_id)
+        if not case:
+            raise ValueError("测试集不存在")
+
+        data = _normalize_case_values(values, require_case_id=False)
+        new_case_id = data.get("case_id")
+        if new_case_id and new_case_id != getattr(case, "case_id", ""):
+            existing = await self._get_case(new_case_id)
+            if existing:
+                raise ValueError("测试集已存在")
+
+        for key, value in data.items():
+            setattr(case, key, value)
+        case.updated_at = datetime.now()
+        await case.save()
+        return self._serialize_case(case)
+
+    async def delete_case(self, case_id: str) -> bool:
+        case = await self._get_case(case_id)
+        if not case:
+            raise ValueError("测试集不存在")
+        await case.delete()
+        return True
+
     async def run_case(self, case_id: str, user_id: str, send_name: str = "管理员") -> Dict[str, Any]:
         await self.ensure_default_cases()
         case = await self._get_case(case_id)
@@ -592,6 +639,103 @@ def _build_contexts(case: Any, extra_data: Dict[str, Any], triggered_tools: Sequ
         f"过程数量：{len(extra_data.get('agent_processes', []) or [])}",
         f"专家结果数量：{len(extra_data.get('expert_results', []) or [])}",
     ]
+
+
+def _normalize_case_values(values: Dict[str, Any], require_case_id: bool) -> Dict[str, Any]:
+    source = values or {}
+    allowed = {
+        "case_id",
+        "name",
+        "suite_type",
+        "agent_mode",
+        "target_agent",
+        "required_tools",
+        "blocked_terms",
+        "turns",
+        "min_score",
+        "enabled",
+        "description",
+    }
+    data = {key: source[key] for key in allowed if key in source}
+    if require_case_id and not str(data.get("case_id", "")).strip():
+        raise ValueError("测试集标识不能为空")
+    if "case_id" in data:
+        data["case_id"] = str(data.get("case_id") or "").strip()
+    if "name" in data:
+        data["name"] = str(data.get("name") or "").strip()
+    if require_case_id and not data.get("name"):
+        raise ValueError("测试集名称不能为空")
+    if "suite_type" in data:
+        suite_type = str(data.get("suite_type") or "mcp").strip()
+        data["suite_type"] = suite_type if suite_type in {"mcp", "agent", "flow"} else "mcp"
+    elif require_case_id:
+        data["suite_type"] = "mcp"
+    if "agent_mode" in data:
+        agent_mode = str(data.get("agent_mode") or "single").strip()
+        data["agent_mode"] = agent_mode if agent_mode in {"single", "expert"} else "single"
+    elif require_case_id:
+        data["agent_mode"] = "single"
+    if "target_agent" in data:
+        data["target_agent"] = str(data.get("target_agent") or "").strip()
+    elif require_case_id:
+        data["target_agent"] = ""
+    if "required_tools" in data:
+        data["required_tools"] = _normalize_string_list(data.get("required_tools"))
+    elif require_case_id:
+        data["required_tools"] = []
+    if "blocked_terms" in data:
+        data["blocked_terms"] = _normalize_string_list(data.get("blocked_terms"))
+    elif require_case_id:
+        data["blocked_terms"] = list(DEFAULT_FORBIDDEN_TERMS)
+    if "turns" in data:
+        data["turns"] = _normalize_turns(data.get("turns"))
+    elif require_case_id:
+        data["turns"] = []
+    if require_case_id and not data["turns"]:
+        raise ValueError("测试轮次不能为空")
+    if "min_score" in data:
+        data["min_score"] = _clamp_score(data.get("min_score", 0.8))
+    elif require_case_id:
+        data["min_score"] = 0.8
+    if "enabled" in data:
+        data["enabled"] = bool(data.get("enabled"))
+    elif require_case_id:
+        data["enabled"] = True
+    if "description" in data:
+        data["description"] = str(data.get("description") or "").strip()
+    elif require_case_id:
+        data["description"] = ""
+    return data
+
+
+def _normalize_string_list(value: Any) -> List[str]:
+    if isinstance(value, str):
+        items = value.split(",")
+    elif isinstance(value, list):
+        items = value
+    else:
+        items = []
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
+def _normalize_turns(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    turns = []
+    for item in value:
+        if isinstance(item, dict):
+            content = str(item.get("content") or "").strip()
+            required_tools = _normalize_string_list(item.get("required_tools", []))
+        else:
+            content = str(item or "").strip()
+            required_tools = []
+        if not content:
+            continue
+        turn = {"content": content}
+        if required_tools:
+            turn["required_tools"] = required_tools
+        turns.append(turn)
+    return turns
 
 
 def _combine_scores(llm_score: Any, rule_score: Any) -> float:
