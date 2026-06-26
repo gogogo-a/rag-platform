@@ -15,22 +15,25 @@ class TextExtractor(BaseExtractor):
     
     def extract_from_file(self, file_path: str) -> str:
         self.validate_file(file_path)
-        
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            logger.info(f"✓ 文本文件提取成功: {Path(file_path).name}, 长度: {len(content)}")
-            return content
-        except UnicodeDecodeError:
-            # 尝试其他编码
+
+        last_error = None
+        for encoding in ("utf-8-sig", "utf-8", "gb18030", "gbk", "utf-16"):
             try:
-                with open(file_path, 'r', encoding='gbk') as f:
+                with open(file_path, 'r', encoding=encoding) as f:
                     content = f.read()
-                logger.info(f"✓ 文本文件提取成功（GBK编码）: {Path(file_path).name}")
+                logger.info(f"✓ 文本文件提取成功: {Path(file_path).name}, 编码: {encoding}, 长度: {len(content)}")
                 return content
-            except Exception as e:
-                logger.error(f"✗ 文本文件提取失败: {e}")
-                raise
+            except UnicodeDecodeError as e:
+                last_error = e
+
+        logger.error(f"✗ 文本文件提取失败: 无法识别文本编码")
+        raise UnicodeDecodeError(
+            "text",
+            b"",
+            0,
+            1,
+            f"无法识别文本编码: {last_error}",
+        )
 
 
 class PDFExtractor(BaseExtractor):
@@ -818,4 +821,3 @@ class XMLExtractor(BaseExtractor):
         except Exception as e:
             logger.error(f"✗ XML提取失败: {e}")
             raise
-

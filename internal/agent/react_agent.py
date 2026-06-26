@@ -17,6 +17,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 
 from log import logger
 from internal.monitor import async_performance_monitor
+from internal.service.ai.stream_parser import StreamParser
 
 
 class TolerantReActOutputParser(ReActSingleInputOutputParser):
@@ -30,10 +31,20 @@ class TolerantReActOutputParser(ReActSingleInputOutputParser):
         cleaned = cleaned.strip(":：")
         return cleaned
 
+    @staticmethod
+    def _looks_like_incomplete_trace(text: str) -> bool:
+        return bool(re.search(r"(?im)^\s*(Thought|Action|Action Input|Observation)\s*$", text))
+
+    @staticmethod
+    def _looks_like_reasoning(text: str) -> bool:
+        return StreamParser()._looks_like_unmarked_reasoning(text)
+
     def parse(self, text: str):
         try:
             parsed = super().parse(text)
         except OutputParserException:
+            if self._looks_like_incomplete_trace(text) or self._looks_like_reasoning(text):
+                raise
             if not re.search(r"(^|\n)\s*(Thought|Action|Action Input|Observation)\s*:", text):
                 answer = text.strip()
                 if answer:

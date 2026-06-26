@@ -137,14 +137,14 @@ GAODE_API_KEY = os.getenv("GAODE_API_KEY", "")
 QA_SIMILARITY_THRESHOLD = float(os.getenv("QA_SIMILARITY_THRESHOLD", "0.95"))
 
 # 是否启用相似问答缓存（启用后相同问题直接返回历史答案）
-ENABLE_QA_CACHE = os.getenv("ENABLE_QA_CACHE", "true").lower() == "true"
+ENABLE_QA_CACHE = os.getenv("ENABLE_QA_CACHE", "false").lower() == "true"
 
 # 问答缓存过期时间（秒，默认 7 天）
 QA_CACHE_TTL = int(os.getenv("QA_CACHE_TTL", str(7 * 24 * 3600)))
 
 # ==================== Agent 配置 ====================
 # Agent 类型：react（传统 ReAct）或 langgraph（LangGraph 状态图）
-AGENT_TYPE = os.getenv("AGENT_TYPE", "react")  # react | langgraph
+AGENT_TYPE = os.getenv("AGENT_TYPE", "langgraph")  # react | langgraph
 
 # Agent 模式：single（单一 Agent）或 expert（专家模式）
 AGENT_MODE = os.getenv("AGENT_MODE", "single").lower()

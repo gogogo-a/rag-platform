@@ -229,11 +229,27 @@ class UserInfoService:
             skip = (page - 1) * page_size
             
             if owner_id:
-                users = await UserInfoModel.find(UserInfoModel.uuid == owner_id).skip(skip).limit(page_size).to_list()
+                users = (
+                    await UserInfoModel.find(UserInfoModel.uuid == owner_id)
+                    .sort(-UserInfoModel.created_at)
+                    .skip(skip)
+                    .limit(page_size)
+                    .to_list()
+                )
             else:
-                users = await UserInfoModel.find_all().skip(skip).limit(page_size).to_list()
+                users = (
+                    await UserInfoModel.find_all()
+                    .sort(-UserInfoModel.created_at)
+                    .skip(skip)
+                    .limit(page_size)
+                    .to_list()
+                )
             
-            user_list = [UserInfoResponse.from_orm(user).model_dump(mode='json') for user in users]
+            user_list = []
+            for user in users:
+                row = UserInfoResponse.from_orm(user).model_dump(mode='json')
+                row["create_at"] = row.get("created_at")
+                user_list.append(row)
             logger.info(f"获取用户列表成功: 共 {len(user_list)} 条")
             
             return "获取成功", user_list, 0
@@ -313,4 +329,3 @@ class UserInfoService:
 
 # 创建单例实例
 user_info_service = UserInfoService()
-

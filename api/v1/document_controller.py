@@ -169,6 +169,20 @@ async def get_document_list(
         return json_response("系统错误", -1)
 
 
+@router.post("/{document_id}/retry", summary="重新处理文档")
+async def retry_document_processing(
+    document_id: str = Path(..., description="文档UUID")
+):
+    try:
+        message, ret, data = await document_service.retry_document_processing(document_id)
+        if data:
+            return json_response(message, ret, data)
+        return json_response(message, ret)
+    except Exception as e:
+        logger.error(f"重新处理文档失败: {e}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
 @router.get("/{document_id}", summary="获取文档详情")
 async def get_document_detail(
     document_id: str = Path(..., description="文档UUID")

@@ -7,7 +7,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from mcp.server import FastMCP
 from typing import Dict, Any
-from pkg.agent_tools.route_planning import route_planning as route_planning_func
+from pkg.utils.mcp_stdio_guard import redirected_stdout
+
+with redirected_stdout():
+    from pkg.agent_tools.route_planning import route_planning as route_planning_func
 
 app = FastMCP("route_planning")
 
@@ -33,15 +36,16 @@ def route_planning(
         city1: 起点城市代码（仅公交必填）
         city2: 终点城市代码（仅公交必填）
     """
-    return route_planning_func(
-        origin=origin,
-        destination=destination,
-        mode=mode,
-        strategy=strategy,
-        waypoints=waypoints,
-        city1=city1,
-        city2=city2
-    )
+    with redirected_stdout():
+        return route_planning_func(
+            origin=origin,
+            destination=destination,
+            mode=mode,
+            strategy=strategy,
+            waypoints=waypoints,
+            city1=city1,
+            city2=city2
+        )
 
 if __name__ == "__main__":
     app.run(transport="stdio")

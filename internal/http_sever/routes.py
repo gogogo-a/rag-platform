@@ -16,6 +16,7 @@ from api.v1.evaluation_controller import router as evaluation_router
 from api.v1.prompt_controller import router as prompt_router
 from api.v1.agent_controller import router as agent_router
 from api.v1.kafka_controller import router as kafka_router
+from api.v1.dashboard_controller import router as dashboard_router
 from log import logger
 
 
@@ -67,6 +68,9 @@ def setup_routes(app: FastAPI):
 
     # ==================== Kafka 可视化路由 ====================
     app.include_router(kafka_router)
+
+    # ==================== 系统总览路由 ====================
+    app.include_router(dashboard_router)
     
     logger.info("✓ 路由注册完成")
     

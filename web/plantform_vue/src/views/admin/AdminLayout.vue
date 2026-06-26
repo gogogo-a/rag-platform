@@ -14,6 +14,11 @@
         text-color="var(--text-secondary)"
         active-text-color="var(--primary-color)"
       >
+        <el-menu-item index="/admin/dashboard">
+          <el-icon><TrendCharts /></el-icon>
+          <span>系统总览</span>
+        </el-menu-item>
+
         <el-menu-item index="/admin/users">
           <el-icon><User /></el-icon>
           <span>用户管理</span>
@@ -73,7 +78,7 @@
 </template>
 
 <script setup>
-import { User, Document, Monitor, DocumentCopy, ChatDotRound, DataAnalysis, EditPen, Connection, Share } from '@element-plus/icons-vue'
+import { User, Document, Monitor, DocumentCopy, ChatDotRound, DataAnalysis, EditPen, Connection, Share, TrendCharts } from '@element-plus/icons-vue'
 </script>
 
 <style scoped>

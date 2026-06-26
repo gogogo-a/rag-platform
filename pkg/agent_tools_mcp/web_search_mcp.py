@@ -10,6 +10,7 @@ from mcp.server import FastMCP
 from typing import Dict, Any
 import requests
 import json
+from pkg.utils.mcp_stdio_guard import redirected_stdout
 
 app = FastMCP("web_search")
 
@@ -32,7 +33,8 @@ def web_search(
         Dict: 包含搜索结果的字典
     """
     try:
-        from pkg.constants.constants import BAIDU_TOKEN
+        with redirected_stdout():
+            from pkg.constants.constants import BAIDU_TOKEN
         
         if not BAIDU_TOKEN:
             return "网页搜索功能未配置（缺少 BAIDU_TOKEN）"

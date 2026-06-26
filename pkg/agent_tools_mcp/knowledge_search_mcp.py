@@ -21,6 +21,7 @@ os.environ["TQDM_DISABLE"] = "1"
 
 from mcp.server import FastMCP
 from typing import Dict, Any
+from pkg.utils.mcp_stdio_guard import redirected_stdout
 
 app = FastMCP("knowledge_search")
 
@@ -40,19 +41,21 @@ def _preload_search_models():
 
 
 def _get_rag_search():
-    from internal.rag.rag_service import rag_service
+    with redirected_stdout():
+        from internal.rag.rag_service import rag_service
 
     return rag_service.search
 
 
 def _search_knowledge_base(query: str, top_k: int, use_reranker: bool, user_permission: int):
     search = _get_rag_search()
-    return search(
-        query=query,
-        top_k=top_k,
-        use_reranker=use_reranker,
-        user_permission=user_permission,
-    )
+    with redirected_stdout():
+        return search(
+            query=query,
+            top_k=top_k,
+            use_reranker=use_reranker,
+            user_permission=user_permission,
+        )
 
 
 @app.tool()

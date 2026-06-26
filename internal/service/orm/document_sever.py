@@ -26,6 +26,7 @@ class DocumentListItem(BaseModel):
     permission: int = 0
     extra_data: Dict[str, Any] = {}
     create_at: Optional[Any] = None
+    update_at: Optional[Any] = None
 
 
 class DocumentService:
@@ -68,6 +69,28 @@ class DocumentService:
             "original_filename": original_filename,
             "message": "文档已存在"
         }
+
+    def _build_processing_task(self, document_uuid: str, file_path: Path, permission: int, uploader_id: str = None, uploader_name: str = None):
+        return {
+            "task_type": "file",
+            "file_path": str(file_path),
+            "document_uuid": document_uuid,
+            "permission": permission,
+            "metadata": {
+                "filename": file_path.name,
+                "source": "api_upload",
+                "permission": permission,
+                "uploader_id": uploader_id,
+                "uploader_name": uploader_name
+            }
+        }
+
+    def _merge_extra_data(self, doc, update: Dict[str, Any]):
+        current_extra_data = getattr(doc, "extra_data", None)
+        extra_data = dict(current_extra_data) if isinstance(current_extra_data, dict) else {}
+        extra_data.update(update)
+        doc.extra_data = extra_data
+        return extra_data
 
     async def upload_document(
         self,
@@ -139,19 +162,7 @@ class DocumentService:
             logger.info(f"文档已保存到 MongoDB: {file_uuid}, 状态: 未处理")
 
             # 5. 提交到 Kafka 异步处理（Embedding）
-            task = {
-                "task_type": "file",
-                "file_path": str(file_path),
-                "document_uuid": file_uuid,
-                "permission": permission,  # 🔥 传递权限信息
-                "metadata": {
-                    "filename": file.filename,
-                    "source": "api_upload",
-                    "permission": permission,  # 🔥 在元数据中也添加权限
-                    "uploader_id": uploader_id,
-                    "uploader_name": uploader_name
-                }
-            }
+            task = self._build_processing_task(file_uuid, file_path, permission, uploader_id, uploader_name)
 
             submit_success = document_processor.submit_task(task)
 
@@ -159,6 +170,13 @@ class DocumentService:
                 logger.error(f"任务提交失败: {file_uuid}")
                 # 更新状态为处理失败
                 doc_model.status = 3  # 3.处理失败
+                self._merge_extra_data(doc_model, {
+                    "processing_stage": "failed",
+                    "failure_stage": "submit",
+                    "failure_reason": "文档处理任务提交失败，请稍后重试",
+                    "failed_at": datetime.now().isoformat(),
+                    "retry_count": 0,
+                })
                 await doc_model.save()
                 logger.info(f"文档状态已更新: {file_uuid} -> 处理失败")
 
@@ -172,6 +190,11 @@ class DocumentService:
 
             # 更新状态为处理中
             doc_model.status = 1  # 1.处理中
+            self._merge_extra_data(doc_model, {
+                "processing_stage": "queued",
+                "queued_at": datetime.now().isoformat(),
+                "retry_count": 0,
+            })
             await doc_model.save()
             logger.info(f"文档状态已更新: {file_uuid} -> 处理中")
             logger.info(f"文档处理任务已提交: {file_uuid}")
@@ -188,6 +211,7 @@ class DocumentService:
                 "status_text": "处理中",
                 "permission": permission,  # 🔥 返回权限信息
                 "dedup_status": "new",
+                "processing_stage": "queued",
                 "message": "文档已提交处理，后台正在进行 Embedding"
             }
             return "上传成功", 0, data
@@ -308,10 +332,22 @@ class DocumentService:
                 # 使用名称模糊搜索
                 query = {"name": {"$regex": keyword, "$options": "i"}}
                 total = await DocumentModel.find(query).count()
-                docs = await DocumentModel.find(query, projection_model=DocumentListItem).skip(skip).limit(page_size).to_list()
+                docs = (
+                    await DocumentModel.find(query, projection_model=DocumentListItem)
+                    .sort(-DocumentModel.update_at)
+                    .skip(skip)
+                    .limit(page_size)
+                    .to_list()
+                )
             else:
                 total = await DocumentModel.count()
-                docs = await DocumentModel.find_all(projection_model=DocumentListItem).skip(skip).limit(page_size).to_list()
+                docs = (
+                    await DocumentModel.find_all(projection_model=DocumentListItem)
+                    .sort(-DocumentModel.update_at)
+                    .skip(skip)
+                    .limit(page_size)
+                    .to_list()
+                )
 
             # 2. 组装文档列表，优先使用已保存的分块数量
             status_text_map = {
@@ -324,6 +360,7 @@ class DocumentService:
             document_list = []
             for doc in docs:
                 chunk_count = self._get_saved_chunk_count(doc)
+                extra_data = getattr(doc, "extra_data", None) or {}
                 document_list.append({
                     "uuid": doc.uuid,
                     "name": doc.name,
@@ -332,7 +369,12 @@ class DocumentService:
                     "status_text": status_text_map.get(doc.status, "未知"),
                     "permission": doc.permission,  # 🔥 添加权限信息
                     "uploaded_at": doc.create_at.isoformat() if doc.create_at else None,
-                    "chunk_count": chunk_count
+                    "updated_at": doc.update_at.isoformat() if doc.update_at else None,
+                    "chunk_count": chunk_count,
+                    "failure_reason": extra_data.get("failure_reason"),
+                    "failure_stage": extra_data.get("failure_stage"),
+                    "processing_stage": extra_data.get("processing_stage"),
+                    "retry_count": extra_data.get("retry_count", 0),
                 })
 
             data = {
@@ -359,6 +401,85 @@ class DocumentService:
         if isinstance(page, int) and page >= 0:
             return page
         return 0
+
+    async def retry_document_processing(self, document_uuid: str):
+        try:
+            from datetime import datetime
+
+            doc = await DocumentModel.find_one(DocumentModel.uuid == document_uuid)
+            if not doc:
+                return "文档不存在", -2, None
+
+            if doc.status not in (1, 3):
+                return "当前文档不需要重新处理", -1, {
+                    "uuid": doc.uuid,
+                    "status": doc.status,
+                }
+
+            file_path = Path(doc.url)
+            if not file_path.is_absolute():
+                file_path = Path(str(doc.url).lstrip("/"))
+            if not file_path.exists():
+                self._merge_extra_data(doc, {
+                    "processing_stage": "failed",
+                    "failure_stage": "validate",
+                    "failure_reason": "原始文件不存在，请重新上传",
+                    "failed_at": datetime.now().isoformat(),
+                })
+                doc.status = 3
+                await doc.save()
+                return "原始文件不存在，请重新上传", -1, {
+                    "uuid": doc.uuid,
+                    "status": doc.status,
+                }
+
+            extra_data = getattr(doc, "extra_data", None) or {}
+            retry_count = int(extra_data.get("retry_count") or 0) + 1
+            task = self._build_processing_task(
+                doc.uuid,
+                file_path,
+                doc.permission,
+                extra_data.get("uploader_id"),
+                extra_data.get("uploader_name"),
+            )
+            submit_success = document_processor.submit_task(task)
+            if not submit_success:
+                self._merge_extra_data(doc, {
+                    "processing_stage": "failed",
+                    "failure_stage": "submit",
+                    "failure_reason": "重新处理提交失败，请稍后再试",
+                    "failed_at": datetime.now().isoformat(),
+                    "retry_count": retry_count,
+                })
+                doc.status = 3
+                await doc.save()
+                return "重新处理提交失败，请稍后再试", -1, {
+                    "uuid": doc.uuid,
+                    "status": doc.status,
+                    "retry_count": retry_count,
+                }
+
+            self._merge_extra_data(doc, {
+                "processing_stage": "queued",
+                "queued_at": datetime.now().isoformat(),
+                "retry_count": retry_count,
+                "failure_stage": None,
+                "failure_reason": None,
+                "failed_at": None,
+            })
+            doc.status = 1
+            await doc.save()
+            return "已重新提交处理", 0, {
+                "uuid": doc.uuid,
+                "status": doc.status,
+                "status_text": "处理中",
+                "retry_count": retry_count,
+                "processing_stage": "queued",
+            }
+
+        except Exception as e:
+            logger.error(f"重新处理文档失败: {e}", exc_info=True)
+            return "重新处理失败", -1, None
 
     async def _get_chunk_count_from_vector_store(self, document_uuid: str) -> int:
         """

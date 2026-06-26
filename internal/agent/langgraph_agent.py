@@ -13,6 +13,7 @@ import operator
 import json
 import re
 import asyncio
+import inspect
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import Tool
@@ -47,6 +48,7 @@ class AgentState(TypedDict):
     should_end: bool
     agent_scratchpad: str
     pending_action: Optional[Dict]
+    failed_actions: List[Dict[str, str]]
 
 
 class StreamingCallbackHandler(BaseCallbackHandler):
@@ -147,6 +149,15 @@ Thought:{agent_scratchpad}"""
             if isinstance(func, Tool):
                 langchain_tools.append(func)
             else:
+                if inspect.iscoroutinefunction(func):
+                    tool = Tool(
+                        name=name,
+                        func=lambda *args, **kwargs: "请使用 coroutine 调用",
+                        coroutine=func,
+                        description=getattr(func, 'description', f"工具: {name}")
+                    )
+                    langchain_tools.append(tool)
+                    continue
                 tool = Tool(
                     name=name,
                     func=func,
@@ -238,6 +249,131 @@ Thought:{agent_scratchpad}"""
         result["type"] = "error"
         result["error"] = "无法解析 LLM 输出格式"
         return result
+
+    def _get_question(self, state: AgentState) -> str:
+        for msg in reversed(state["messages"]):
+            if isinstance(msg, HumanMessage):
+                return str(msg.content)
+        return ""
+
+    def _normalize_tool_input(self, tool_input: Any, question: str) -> str:
+        if tool_input is None:
+            return question
+        if isinstance(tool_input, dict):
+            if not tool_input:
+                return question
+            query = tool_input.get("query")
+            if isinstance(query, str) and query.strip():
+                return query.strip()
+            return json.dumps(tool_input, ensure_ascii=False)
+
+        cleaned = str(tool_input).strip()
+        if cleaned in {"", "{}", "[]", "null", "None"}:
+            return question
+
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                if not parsed:
+                    return question
+                query = parsed.get("query")
+                if isinstance(query, str) and query.strip():
+                    return query.strip()
+        except json.JSONDecodeError:
+            pass
+
+        return cleaned
+
+    @staticmethod
+    def _is_tool_failure(result: Any) -> bool:
+        text = str(result or "")
+        failure_markers = (
+            "未找到相关搜索结果",
+            "工具调用失败",
+            "网页搜索功能未配置",
+            "搜索失败",
+            "执行失败",
+            "timeout",
+            "timed out",
+        )
+        return any(marker in text for marker in failure_markers)
+
+    @staticmethod
+    def _is_useful_tool_result(result: Any) -> bool:
+        text = str(result or "").strip()
+        return bool(text) and not LangGraphAgent._is_tool_failure(text)
+
+    def _has_useful_tool_result(self, state: AgentState) -> bool:
+        return any(self._is_useful_tool_result(item.get("result")) for item in state.get("tool_results", []))
+
+    def _has_failed_action(self, state: AgentState, tool_name: str, tool_input: str) -> bool:
+        return any(
+            item.get("tool") == tool_name and item.get("input") == tool_input
+            for item in state.get("failed_actions", [])
+        )
+
+    @staticmethod
+    def _clean_final_answer(answer: str) -> str:
+        cleaned = str(answer or "").strip()
+        if "Final Answer:" in cleaned:
+            cleaned = cleaned.split("Final Answer:")[-1].strip()
+        cleaned = re.sub(r"(?im)^\s*(Thought|Action|Action Input|Observation)\s*:.*$", "", cleaned)
+        return cleaned.strip()
+
+    @staticmethod
+    def _looks_like_process_text(text: str) -> bool:
+        stripped = str(text or "").strip()
+        if not stripped:
+            return False
+        process_phrases = (
+            "我已经获取",
+            "获取到了一些",
+            "为了更全面",
+            "进一步搜索",
+            "需要进一步",
+            "我需要进一步",
+            "我需要提供",
+            "需要提供从基础到进阶",
+            "我可以先搜索",
+            "先搜索知识库",
+            "同时也可以搜索",
+            "搜索网络上的最新资源",
+            "这是一个技术性较强的问题",
+        )
+        return any(phrase in stripped for phrase in process_phrases)
+
+    def _is_valid_final_answer(self, answer: str) -> bool:
+        cleaned = self._clean_final_answer(answer)
+        if not cleaned:
+            return False
+        if self._looks_like_process_text(cleaned):
+            return False
+        return not any(marker in cleaned for marker in ("Thought:", "Action:", "Action Input:", "Observation:"))
+
+    def _build_direct_answer_from_tool_results(self, state: AgentState) -> str:
+        question = self._get_question(state)
+        useful_results = [
+            item for item in state.get("tool_results", [])
+            if self._is_useful_tool_result(item.get("result"))
+        ]
+        if not useful_results:
+            return "抱歉，我没有找到足够的信息来回答这个问题。"
+
+        result_text = str(useful_results[0].get("result") or "").strip()
+        result_text = re.sub(r"\s+", " ", result_text)
+        if len(result_text) > 900:
+            result_text = result_text[:900].rstrip() + "..."
+
+        doc_names = []
+        for doc in state.get("documents", []):
+            name = str(doc.get("name") or "").strip()
+            if name and name not in doc_names:
+                doc_names.append(name)
+
+        parts = [f"关于“{question}”，建议按下面的路线做：", result_text]
+        if doc_names:
+            parts.append("参考资料：" + "、".join(doc_names[:3]))
+        return "\n\n".join(parts)
     
     async def _stream_llm_call(self, prompt: str) -> str:
         """流式调用 LLM，通过回调发送每个 token"""
@@ -255,6 +391,11 @@ Thought:{agent_scratchpad}"""
         except Exception as e:
             logger.error(f"流式 LLM 调用失败: {e}")
             raise
+
+    async def _plain_llm_call(self, prompt: str) -> str:
+        """调用 LLM 并只返回完整文本，不向前端发送 token。"""
+        response = await self.llm.ainvoke(prompt)
+        return response.content if hasattr(response, 'content') else str(response)
     
     async def _think_node(self, state: AgentState) -> AgentState:
         """思考节点 - 调用 LLM 决定下一步行动（流式输出）"""
@@ -264,12 +405,7 @@ Thought:{agent_scratchpad}"""
             if chat_history:
                 chat_history = f"历史对话记录：\n{chat_history}\n"
             
-            # 获取用户问题
-            question = ""
-            for msg in reversed(state["messages"]):
-                if isinstance(msg, HumanMessage):
-                    question = msg.content
-                    break
+            question = self._get_question(state)
             
             # 构建 prompt
             prompt = self.REACT_PROMPT.format(
@@ -280,8 +416,12 @@ Thought:{agent_scratchpad}"""
                 agent_scratchpad=state["agent_scratchpad"]
             )
             
-            # 流式调用 LLM
-            llm_output = await self._stream_llm_call(prompt)
+            # 已有工具结果后，模型可能先输出草稿再输出 Final Answer。
+            # 这里先完整收集再清洗，避免草稿和控制标记进入正式回答。
+            if state.get("tool_results"):
+                llm_output = await self._plain_llm_call(prompt)
+            else:
+                llm_output = await self._stream_llm_call(prompt)
             
             # 解析 LLM 输出
             parsed = self._parse_llm_output(llm_output)
@@ -293,9 +433,28 @@ Thought:{agent_scratchpad}"""
             }
             
             if parsed["type"] == "final_answer":
-                new_state["final_answer"] = parsed["answer"]
+                cleaned_answer = self._clean_final_answer(parsed["answer"])
+                if self._is_valid_final_answer(cleaned_answer):
+                    new_state["final_answer"] = cleaned_answer
+                elif self._has_useful_tool_result(state):
+                    new_state["last_error"] = "模型输出了过程句，改为基于已有结果回答"
+                    new_state["error_type"] = ErrorType.PARSE_ERROR.value
+                else:
+                    new_state["last_error"] = "模型输出了过程句"
+                    new_state["error_type"] = ErrorType.PARSE_ERROR.value
+                    new_state["error_count"] = state["error_count"] + 1
             
             elif parsed["type"] == "action":
+                parsed["tool_input"] = self._normalize_tool_input(parsed["tool_input"], question)
+                if self._has_failed_action(state, parsed["tool_name"], parsed["tool_input"]):
+                    if self._has_useful_tool_result(state):
+                        new_state["last_error"] = "重复调用失败工具，改为基于已有结果回答"
+                        new_state["error_type"] = ErrorType.TOOL_ERROR.value
+                    else:
+                        new_state["last_error"] = f"重复调用失败工具: {parsed['tool_name']}"
+                        new_state["error_type"] = ErrorType.TOOL_ERROR.value
+                        new_state["error_count"] = state["error_count"] + 1
+                    return new_state
                 new_state["pending_action"] = {
                     "tool_name": parsed["tool_name"],
                     "tool_input": parsed["tool_input"]
@@ -347,6 +506,8 @@ Thought:{agent_scratchpad}"""
                 result = await tool.coroutine(tool_input)
             else:
                 result = tool.func(tool_input)
+                if inspect.isawaitable(result):
+                    result = await result
             
             # 发送 observation 事件
             if self.callback:
@@ -380,13 +541,24 @@ Thought:{agent_scratchpad}"""
             existing_uuids = {d["uuid"] for d in state["documents"] if d.get("uuid")}
             new_docs = [d for d in documents if d.get("uuid") and d["uuid"] not in existing_uuids]
             
+            failed_actions = list(state.get("failed_actions", []))
+            tool_failed = self._is_tool_failure(result)
+            if tool_failed:
+                failed_actions.append({
+                    "tool": tool_name,
+                    "input": str(tool_input),
+                    "result": str(result)[:200],
+                })
+
             return {
                 "agent_scratchpad": new_scratchpad,
                 "tool_results": state["tool_results"] + [{"tool": tool_name, "result": str(result)[:200]}],
                 "documents": state["documents"] + new_docs,
+                "failed_actions": failed_actions,
                 "pending_action": None,
-                "last_error": None,
-                "error_type": None
+                "last_error": str(result)[:200] if tool_failed else None,
+                "error_type": ErrorType.TOOL_ERROR.value if tool_failed else None,
+                "error_count": state["error_count"] + 1 if tool_failed else state["error_count"],
             }
             
         except asyncio.TimeoutError:
@@ -414,6 +586,11 @@ Thought:{agent_scratchpad}"""
                 "last_error": str(e),
                 "error_type": ErrorType.TOOL_ERROR.value,
                 "error_count": state["error_count"] + 1,
+                "failed_actions": state.get("failed_actions", []) + [{
+                    "tool": state.get("pending_action", {}).get("tool_name", ""),
+                    "input": str(state.get("pending_action", {}).get("tool_input", "")),
+                    "result": str(e)[:200],
+                }],
                 "pending_action": None
             }
 
@@ -423,6 +600,12 @@ Thought:{agent_scratchpad}"""
         error_count = state.get("error_count", 0)
         last_error = state.get("last_error", "未知错误")
         
+        if self._has_useful_tool_result(state):
+            return {
+                "final_answer": self._build_direct_answer_from_tool_results(state),
+                "should_end": True
+            }
+
         if error_count >= self.max_retries:
             logger.warning(f"错误次数超过限制 ({error_count}/{self.max_retries})，降级处理")
             return {
@@ -456,17 +639,33 @@ Thought:{agent_scratchpad}"""
     async def _finalize_node(self, state: AgentState) -> AgentState:
         """最终化节点 - 生成最终答案（流式输出）"""
         if state.get("final_answer"):
-            # final_answer 已经通过流式输出发送了
+            final_answer = self._clean_final_answer(state["final_answer"])
+            if self.callback and final_answer not in self.streaming_handler.get_collected_text():
+                self.callback("final_answer", final_answer)
             return {"should_end": True}
         
         # 如果没有最终答案，基于工具结果生成
         if state["tool_results"]:
+            if state.get("last_error") and self._has_useful_tool_result(state):
+                final_answer = self._build_direct_answer_from_tool_results(state)
+                if self.callback:
+                    self.callback("final_answer", final_answer)
+                return {
+                    "final_answer": final_answer,
+                    "should_end": True
+                }
+
+            if any(self._is_tool_failure(item.get("result")) for item in state["tool_results"]):
+                final_answer = self._build_direct_answer_from_tool_results(state)
+                if self.callback:
+                    self.callback("final_answer", final_answer)
+                return {
+                    "final_answer": final_answer,
+                    "should_end": True
+                }
+
             # 获取用户问题
-            question = ""
-            for msg in reversed(state["messages"]):
-                if isinstance(msg, HumanMessage):
-                    question = msg.content
-                    break
+            question = self._get_question(state)
             
             # 构建总结 prompt
             summary_prompt = f"""根据以下工具调用结果，给出简洁明了的最终答案。
@@ -478,12 +677,17 @@ Thought:{agent_scratchpad}"""
 
 请直接给出最终答案，不需要再调用工具。"""
             
-            # 流式调用 LLM 生成最终答案
-            final_answer = await self._stream_llm_call(summary_prompt)
+            # 汇总阶段先拿完整输出，清洗后再发送给前端，避免草稿内容进入正式回答。
+            final_answer = await self._plain_llm_call(summary_prompt)
             
             # 清理答案格式
             if "Final Answer:" in final_answer:
                 final_answer = final_answer.split("Final Answer:")[-1].strip()
+            final_answer = self._clean_final_answer(final_answer)
+            if self._looks_like_process_text(final_answer):
+                final_answer = self._build_direct_answer_from_tool_results(state)
+            if self.callback and final_answer not in self.streaming_handler.get_collected_text():
+                self.callback("final_answer", final_answer)
             
             return {
                 "final_answer": final_answer,
@@ -493,7 +697,7 @@ Thought:{agent_scratchpad}"""
         # 没有工具结果，返回默认答案
         default_answer = "抱歉，我无法找到相关信息来回答您的问题。"
         if self.callback:
-            self.callback("llm_chunk", default_answer)
+            self.callback("final_answer", default_answer)
         
         return {
             "final_answer": default_answer,
@@ -502,19 +706,21 @@ Thought:{agent_scratchpad}"""
     
     def _route_after_think(self, state: AgentState) -> Literal["act", "finalize", "end"]:
         """思考后的路由决策"""
-        if state["current_step"] >= state["max_steps"]:
-            return "finalize"
         if state.get("last_error"):
             return "finalize"
         if state.get("final_answer"):
             return "finalize"
         if state.get("pending_action"):
             return "act"
+        if state["current_step"] >= state["max_steps"]:
+            return "finalize"
         return "finalize"
     
     def _route_after_act(self, state: AgentState) -> Literal["think", "error_recovery", "finalize"]:
         """行动后的路由决策"""
         if state.get("last_error"):
+            if self._has_useful_tool_result(state):
+                return "finalize"
             return "error_recovery"
         if state["current_step"] >= state["max_steps"]:
             return "finalize"
@@ -563,6 +769,7 @@ Thought:{agent_scratchpad}"""
                 "should_end": False,
                 "agent_scratchpad": "",
                 "pending_action": None
+                ,"failed_actions": []
             }
             
             final_state = await self.app.ainvoke(initial_state)

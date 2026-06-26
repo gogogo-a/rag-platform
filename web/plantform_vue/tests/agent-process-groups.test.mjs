@@ -289,4 +289,58 @@ assert.deepEqual(
   ['thought:搜索一下北京 明天天气，并说明适合 去哪里玩']
 )
 
+const duplicatedHistoryMessage = normalizeChatMessages([
+  {
+    send_type: 1,
+    content: '回答',
+    extra_data: {
+      agent_manifest: [
+        { agent_key: 'search', agent_name: '搜索专家', tools: ['web_search'] }
+      ],
+      agent_processes: [
+        {
+          scope: 'expert',
+          agent_key: 'search',
+          agent_name: '搜索专家',
+          phase: 'thought',
+          content: '用户想了解如何自制一个深度学习框架，这是一个技术性较强的问题。',
+          step_index: 1
+        },
+        {
+          scope: 'expert',
+          agent_key: 'search',
+          agent_name: '搜索专家',
+          phase: 'thought',
+          content: '用户想了解如何自制一个深度学习框架，这是一个技术性较强的问题。',
+          step_index: 2
+        },
+        {
+          scope: 'expert',
+          agent_key: 'search',
+          agent_name: '搜索专家',
+          phase: 'observation',
+          content: '未找到相关搜索结果',
+          step_index: 3
+        },
+        {
+          scope: 'expert',
+          agent_key: 'search',
+          agent_name: '搜索专家',
+          phase: 'observation',
+          content: '未找到相关搜索结果',
+          step_index: 4
+        }
+      ]
+    }
+  }
+])[0]
+
+assert.deepEqual(
+  getExpertProcessGroups(duplicatedHistoryMessage)[0].processes.map((item) => `${item.phase}:${item.content}`),
+  [
+    'thought:用户想了解如何自制一个深度学习框架，这是一个技术性较强的问题。',
+    'observation:未找到相关搜索结果'
+  ]
+)
+
 console.log('agent process grouping verified')

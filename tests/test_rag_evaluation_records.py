@@ -269,6 +269,23 @@ class RAGEvaluationRecordServiceTest(unittest.TestCase):
         self.assertEqual(events[1]["event"], "rag_results")
         self.assertEqual(events[1]["data"]["results"][0]["text"], "制度查询说明正文")
 
+    def test_ai_stream_falls_back_to_observation_answer_when_agent_has_no_final_answer(self):
+        service = AIReplyService()
+
+        result = service._build_observation_fallback_answer(
+            "如何自制一个深度学习框架",
+            [
+                "知识库中检索到了《深度学习入门：自制框架》的资料，介绍了从零开始用 Python 创建深度学习框架，分 60 个步骤完成。",
+                "未找到相关搜索结果",
+            ],
+            [{"uuid": "doc-1", "name": "深度学习自制框架.pdf"}],
+        )
+
+        self.assertIn("从零开始用 Python 创建深度学习框架", result)
+        self.assertIn("60 个步骤", result)
+        self.assertIn("深度学习自制框架.pdf", result)
+        self.assertNotIn("未找到相关搜索结果", result)
+
     def test_no_rag_results_do_not_create_records(self):
         service = RAGEvaluationService(evaluation_model=FakeEvaluationRecord)
 

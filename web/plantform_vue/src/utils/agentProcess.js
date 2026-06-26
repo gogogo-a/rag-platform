@@ -141,9 +141,18 @@ export const applyAgentProcess = (message, process) => {
 
 const mergeConsecutiveProcesses = (processes) => {
   const merged = []
+  const seen = new Set()
   for (const process of processes) {
     const normalized = normalizeAgentProcess(process)
     if (!normalized) continue
+    const dedupeKey = [
+      normalized.scope,
+      normalized.agentKey,
+      normalized.phase,
+      normalized.content
+    ].join('\u0001')
+    if (seen.has(dedupeKey)) continue
+    seen.add(dedupeKey)
     const last = merged[merged.length - 1]
     if (
       last &&

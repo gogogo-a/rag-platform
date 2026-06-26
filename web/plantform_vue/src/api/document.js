@@ -41,6 +41,16 @@ export function getDocumentDetail(documentId) {
 }
 
 /**
+ * 重新处理文档
+ */
+export function retryDocumentProcessing(documentId) {
+  return request({
+    url: `/documents/${documentId}/retry`,
+    method: 'post'
+  })
+}
+
+/**
  * 删除文档
  */
 export function deleteDocument(documentId) {
@@ -49,4 +59,3 @@ export function deleteDocument(documentId) {
     method: 'delete'
   })
 }
-

@@ -90,7 +90,7 @@ class MCPManager:
             server_params = StdioServerParameters(
                 command=PYTHON_PATH,
                 args=[tool_config["script"]],
-                env=dict(os.environ),
+                env={**dict(os.environ), "PLANTFORM_MCP_STDIO": "1"},
                 cwd=os.getcwd(),
             )
 

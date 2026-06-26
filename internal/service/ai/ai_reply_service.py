@@ -8,6 +8,7 @@ AI 回复生成服务
 from typing import Dict, Any, List, AsyncGenerator, Optional, Callable
 import asyncio
 import queue
+import re
 
 from log import logger
 from pkg.model_list import DEEPSEEK_CHAT
@@ -108,6 +109,13 @@ class AIReplyService:
             # 0. 检查相似问题缓存（如果不跳过）
             if similar_qa_cache.is_enabled() and not skip_cache:
                 similar_result = await similar_qa_cache.find_similar(question_for_search, user_id)
+                if similar_result:
+                    cached_answer = stream_parser.clean_final_result(similar_result.get("answer", ""))
+                    if not cached_answer:
+                        similar_result = None
+                    else:
+                        similar_result["answer"] = cached_answer
+
                 if similar_result:
                     # 发送缓存命中提示
                     yield {
@@ -219,10 +227,23 @@ class AIReplyService:
             # 处理最终答案
             if not stream_parser.is_answer_sent() and result:
                 if not stream_parser.should_skip_duplicate_answer(result):
-                    yield {
-                        "event": "answer_chunk",
-                        "data": {"content": result}
-                    }
+                    final_result = stream_parser.clean_final_result(result)
+                    if final_result:
+                        yield {
+                            "event": "answer_chunk",
+                            "data": {"content": final_result}
+                        }
+                    else:
+                        fallback_result = self._build_observation_fallback_answer(
+                            question_for_search,
+                            stream_parser.get_observations(),
+                            retrieved_documents,
+                        )
+                        if fallback_result:
+                            yield {
+                                "event": "answer_chunk",
+                                "data": {"content": fallback_result}
+                            }
             
             # 发送文档信息
             if retrieved_documents:
@@ -280,6 +301,44 @@ class AIReplyService:
             tools=tools,
             callback=callback,
         )
+
+    def _build_observation_fallback_answer(
+        self,
+        question: str,
+        observations: List[str],
+        documents: List[Dict[str, Any]],
+    ) -> Optional[str]:
+        useful_observations = []
+        for observation in observations:
+            text = str(observation or "").strip()
+            if not text:
+                continue
+            if "未找到相关搜索结果" in text or text == "[]":
+                continue
+            useful_observations.append(text)
+
+        if not useful_observations:
+            return None
+
+        source_text = useful_observations[0]
+        source_text = re.sub(r"\s+", " ", source_text).strip()
+        if len(source_text) > 900:
+            source_text = source_text[:900].rstrip() + "..."
+
+        document_names = []
+        for document in documents:
+            name = str(document.get("name") or document.get("filename") or "").strip()
+            if name and name not in document_names:
+                document_names.append(name)
+
+        answer_parts = [
+            f"关于“{question}”，可以参考已检索到的资料来做：",
+            source_text,
+        ]
+        if document_names:
+            answer_parts.append("参考资料：" + "、".join(document_names[:3]))
+
+        return "\n\n".join(answer_parts)
     
     async def _process_event_queue(
         self,

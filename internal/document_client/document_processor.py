@@ -6,6 +6,7 @@
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 import re
+from datetime import datetime
 from log import logger
 from internal.document_client.message_client import message_client
 from internal.document_client.config_loader import config
@@ -52,6 +53,17 @@ class DocumentProcessor:
             f"文档处理器已初始化 "
             f"(分块大小: {self.chunk_size}, 重叠: {self.chunk_overlap})"
         )
+
+    def _failure_result(self, message: str, stage: str, **extra: Any) -> Dict[str, Any]:
+        return {
+            "success": False,
+            "message": message,
+            "failure_stage": stage,
+            **extra,
+        }
+
+    def _now_iso(self) -> str:
+        return datetime.now().isoformat()
 
     def _normalize_chunk_for_exact_dedup(self, text: str) -> str:
         return re.sub(r"\s+", " ", text or "").strip()
@@ -104,10 +116,7 @@ class DocumentProcessor:
             start_datetime = datetime.now()
             # 1. 验证文件
             if not extractor_manager.is_supported(file_path):
-                return {
-                    "success": False,
-                    "message": f"不支持的文件类型: {Path(file_path).suffix}"
-                }
+                return self._failure_result(f"不支持的文件类型: {Path(file_path).suffix}", "validate")
             
             file_info = extractor_manager.get_file_info(file_path)
             logger.info(f"开始处理文档: {file_info['name']}, UUID: {document_uuid}")
@@ -115,6 +124,8 @@ class DocumentProcessor:
             # 2. 加载文档
             loaded_docs = extractor_manager.load_document(file_path)
             full_content = "\n\n".join([doc["content"] for doc in loaded_docs])
+            if not full_content.strip():
+                return self._failure_result("文件内容为空", "extract", text_length=len(full_content))
             
             # 3. 分割文本
             chunks = extractor_manager.split_text(
@@ -131,13 +142,12 @@ class DocumentProcessor:
             )
             
             if not chunks:
-                return {
-                    "success": False,
-                    "message": "文档分割后没有生成文本块"
-                }
+                return self._failure_result("文件内容为空", "split", text_length=len(full_content))
             
             chunks, dedup_stats = self._deduplicate_exact_chunks(chunks)
             logger.info(f"文档分割完成: {dedup_stats['raw_chunks_count']} 个块，去重后: {len(chunks)} 个块")
+            if not chunks:
+                return self._failure_result("文件内容为空", "split", text_length=len(full_content), **dedup_stats)
             
             # 4. 批量 Embedding（记录时间）
             embedding_start_time = time.time()
@@ -221,20 +231,15 @@ class DocumentProcessor:
                     "processing_time": round(process_duration, 2),  # 🔥 总处理时间（秒）
                     "start_datetime": start_datetime.isoformat(),  # 🔥 开始时间
                     "complete_datetime": complete_datetime.isoformat(),  # 🔥 完成时间
+                    "text_length": text_length,
                     **dedup_stats
                 }
             else:
-                return {
-                    "success": False,
-                    "message": "向量存储失败"
-                }
+                return self._failure_result("向量存储失败", "vector_store", chunks_count=len(chunks))
                 
         except Exception as e:
             logger.error(f"处理文件失败: {e}", exc_info=True)
-            return {
-                "success": False,
-                "message": f"处理异常: {str(e)}"
-            }
+            return self._failure_result(f"处理异常: {str(e)}", "process")
     
     def process_text(
         self,
@@ -502,10 +507,31 @@ class DocumentProcessor:
             logger.error("文件任务缺少必要字段: file_path, document_uuid")
             # 更新状态为处理失败
             try:
-                self._update_document_status_sync(document_uuid, 3)
+                self._update_document_status_sync(
+                    document_uuid,
+                    3,
+                    extra_data_update={
+                        "processing_stage": "failed",
+                        "failure_stage": "validate",
+                        "failure_reason": "文档处理任务信息不完整",
+                        "failed_at": self._now_iso(),
+                    },
+                )
             except Exception as e:
                 logger.error(f"更新文档状态失败: {e}")
             return
+
+        self._update_document_status_sync(
+            document_uuid,
+            status=1,
+            extra_data_update={
+                "processing_stage": "processing",
+                "processing_started_at": self._now_iso(),
+                "failure_stage": None,
+                "failure_reason": None,
+                "failed_at": None,
+            },
+        )
         
         result = self.process_file(
             file_path=file_path,
@@ -523,6 +549,7 @@ class DocumentProcessor:
                 
                 # 🔥 准备extra_data更新（记录处理时间）
                 extra_data_update = {
+                    "processing_stage": "completed",
                     "embedding_time_seconds": result.get('embedding_time'),
                     "processing_time_seconds": result.get('processing_time'),
                     "processing_start_time": result.get('start_datetime'),
@@ -531,7 +558,11 @@ class DocumentProcessor:
                     "chunks_count": chunks_count,
                     "raw_chunks_count": result.get('raw_chunks_count', chunks_count),
                     "deduped_chunks_count": result.get('deduped_chunks_count', chunks_count),
-                    "duplicate_chunks_removed": result.get('duplicate_chunks_removed', 0)
+                    "duplicate_chunks_removed": result.get('duplicate_chunks_removed', 0),
+                    "text_length": result.get("text_length"),
+                    "failure_stage": None,
+                    "failure_reason": None,
+                    "failed_at": None,
                 }
                 
                 self._update_document_status_sync(
@@ -544,7 +575,16 @@ class DocumentProcessor:
                 logger.info(f"✅ 文档处理完成，状态已更新: {document_uuid}")
             else:
                 # 处理失败：status=3（处理失败）
-                self._update_document_status_sync(document_uuid, 3)
+                self._update_document_status_sync(
+                    document_uuid,
+                    status=3,
+                    extra_data_update={
+                        "processing_stage": "failed",
+                        "failure_stage": result.get("failure_stage", "process"),
+                        "failure_reason": result.get("message") or "文档处理失败",
+                        "failed_at": self._now_iso(),
+                    },
+                )
                 logger.error(f"❌ 文档处理失败: {result['message']}, 状态已更新: {document_uuid}")
         except Exception as e:
             logger.error(f"更新文档状态时发生异常: {e}", exc_info=True)

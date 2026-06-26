@@ -185,6 +185,37 @@ class DocumentUploadDeduplicationTest(unittest.TestCase):
         self.assertEqual(len(FakeDocumentModel.created), 1)
         fake_processor.submit_task.assert_called_once()
 
+    def test_retry_failed_document_reuses_existing_uuid_and_marks_queued(self):
+        service = DocumentService()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = Path(tmpdir) / "doc-retry.md"
+            file_path.write_text("可以重新处理的内容", encoding="utf-8")
+            service.upload_dir = Path(tmpdir)
+            failed_doc = FakeDocumentRecord(
+                uuid="doc-retry",
+                name="doc-retry.md",
+                status=3,
+                permission=0,
+                url=str(file_path),
+                extra_data={"retry_count": 1, "uploader_id": "admin", "uploader_name": "admin"},
+            )
+            FakeDocumentModel.docs = [failed_doc]
+            fake_processor = SimpleNamespace(submit_task=MagicMock(return_value=True))
+
+            with patch("internal.service.orm.document_sever.DocumentModel", FakeDocumentModel), \
+                 patch("internal.service.orm.document_sever.document_processor", fake_processor):
+                message, ret, data = asyncio.run(service.retry_document_processing("doc-retry"))
+
+        self.assertEqual(message, "已重新提交处理")
+        self.assertEqual(ret, 0)
+        self.assertEqual(data["uuid"], "doc-retry")
+        self.assertEqual(failed_doc.status, 1)
+        self.assertEqual(failed_doc.extra_data["processing_stage"], "queued")
+        self.assertEqual(failed_doc.extra_data["retry_count"], 2)
+        fake_processor.submit_task.assert_called_once()
+        task = fake_processor.submit_task.call_args.args[0]
+        self.assertEqual(task["document_uuid"], "doc-retry")
+
     def test_exact_duplicate_chunks_are_removed_before_embedding(self):
         processor = DocumentProcessor()
         chunks = [

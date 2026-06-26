@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from mcp.server import FastMCP
 from typing import Dict, Any
 import requests
+from pkg.utils.mcp_stdio_guard import redirected_stdout
 
 app = FastMCP("weather_query")
 
@@ -25,7 +26,8 @@ def weather_query(city: str, extensions: str = "base") -> Dict[str, Any]:
         Dict: 包含天气信息的字典
     """
     try:
-        from pkg.constants.constants import GAODE_API_KEY
+        with redirected_stdout():
+            from pkg.constants.constants import GAODE_API_KEY
         
         if not GAODE_API_KEY:
             return {

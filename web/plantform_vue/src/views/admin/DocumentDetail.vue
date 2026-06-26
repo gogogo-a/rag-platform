@@ -14,6 +14,15 @@
         >
           {{ isDownloading ? '下载中...' : '下载文档' }}
         </el-button>
+        <el-button
+          v-if="isAdmin && document && (document.status === 1 || document.status === 3)"
+          type="warning"
+          :icon="RefreshRight"
+          @click="handleRetry"
+          :loading="isRetrying"
+        >
+          重新处理
+        </el-button>
         <!-- 只有管理员可以删除 -->
         <el-button 
           v-if="isAdmin"
@@ -107,8 +116,24 @@
                 {{ document.status_text || '未知' }}
               </el-tag>
               <p class="status-desc">
-                {{ getStatusDescription(document.status, document.chunk_count) }}
+                {{ getStatusDescription(document) }}
               </p>
+            </div>
+            <div class="info-item" v-if="document.extra_data?.processing_stage">
+              <span class="label">处理进度：</span>
+              <span class="value">{{ getProcessingStageText(document.extra_data.processing_stage) }}</span>
+            </div>
+            <div class="info-item" v-if="document.extra_data?.failure_reason">
+              <span class="label">失败原因：</span>
+              <span class="value danger-text">{{ document.extra_data.failure_reason }}</span>
+            </div>
+            <div class="info-item" v-if="document.extra_data?.retry_count">
+              <span class="label">重新处理次数：</span>
+              <span class="value">{{ document.extra_data.retry_count }}</span>
+            </div>
+            <div class="info-item" v-if="document.extra_data?.chunks_count || document.extra_data?.raw_chunks_count">
+              <span class="label">分块数量：</span>
+              <span class="value">{{ document.extra_data.chunks_count || document.extra_data.raw_chunks_count }}</span>
             </div>
           </div>
         </div>
@@ -242,7 +267,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/store'
-import { getDocumentDetail, deleteDocument } from '@/api'
+import { getDocumentDetail, deleteDocument, retryDocumentProcessing } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
   ArrowLeft, 
@@ -255,7 +280,8 @@ import {
   Reading,
   User,
   Lock,
-  Download
+  Download,
+  RefreshRight
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -265,6 +291,7 @@ const userStore = useUserStore()
 const loading = ref(false)
 const document = ref(null)
 const isDownloading = ref(false)
+const isRetrying = ref(false)
 
 // 判断是否为管理员
 const isAdmin = computed(() => userStore.userInfo.is_admin === 1)
@@ -327,14 +354,25 @@ const getStatusType = (status) => {
 }
 
 // 获取状态描述
-const getStatusDescription = (status, chunkCount) => {
+const getStatusDescription = (doc) => {
+  if (!doc) return '状态未知'
   const descMap = {
     0: '文档尚未开始处理',
-    1: '文档正在后台处理中，请稍后刷新...',
-    2: `文档已成功处理完成，共分块为 ${chunkCount || 0} 个文本块，可用于检索`,
-    3: '文档处理失败，请重新上传或联系管理员'
+    1: '文档正在处理中，请稍后刷新',
+    2: `文档已处理完成，共 ${doc.chunk_count || 0} 个文本块，可用于检索`,
+    3: doc.extra_data?.failure_reason || '处理未完成，可重新处理'
   }
-  return descMap[status] || '状态未知'
+  return descMap[doc.status] || '状态未知'
+}
+
+const getProcessingStageText = (stage) => {
+  const textMap = {
+    queued: '等待处理',
+    processing: '正在处理',
+    completed: '处理完成',
+    failed: '处理失败'
+  }
+  return textMap[stage] || '等待处理'
 }
 
 // 返回
@@ -398,6 +436,20 @@ const handleDownload = async () => {
     ElMessage.error('下载失败: ' + error.message)
   } finally {
     isDownloading.value = false
+  }
+}
+
+const handleRetry = async () => {
+  if (!document.value || isRetrying.value) return
+  try {
+    isRetrying.value = true
+    await retryDocumentProcessing(document.value.uuid)
+    ElMessage.success('已重新提交处理')
+    await fetchDocumentDetail()
+  } catch (error) {
+    ElMessage.error('重新处理失败')
+  } finally {
+    isRetrying.value = false
   }
 }
 
@@ -540,6 +592,10 @@ onMounted(() => {
   color: var(--text-primary);
   font-size: 14px;
   word-break: break-all;
+}
+
+.danger-text {
+  color: #f56c6c;
 }
 
 .document-link {
@@ -689,4 +745,3 @@ onMounted(() => {
   }
 }
 </style>
-

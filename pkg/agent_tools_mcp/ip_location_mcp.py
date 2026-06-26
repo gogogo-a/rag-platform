@@ -7,7 +7,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from mcp.server import FastMCP
 from typing import Dict, Any
-from pkg.agent_tools.ip_location import ip_location as ip_location_func
+from pkg.utils.mcp_stdio_guard import redirected_stdout
+
+with redirected_stdout():
+    from pkg.agent_tools.ip_location import ip_location as ip_location_func
 
 app = FastMCP("ip_location")
 
@@ -19,7 +22,8 @@ def ip_location(ip: str = None) -> Dict[str, Any]:
     Args:
         ip: IP 地址（可选），如果不提供则自动获取客户端 IP
     """
-    return ip_location_func(ip=ip)
+    with redirected_stdout():
+        return ip_location_func(ip=ip)
 
 if __name__ == "__main__":
     app.run(transport="stdio")

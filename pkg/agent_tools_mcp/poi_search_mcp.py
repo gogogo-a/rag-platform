@@ -7,7 +7,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from mcp.server import FastMCP
 from typing import Dict, Any
-from pkg.agent_tools.poi_search import poi_search as poi_search_func
+from pkg.utils.mcp_stdio_guard import redirected_stdout
+
+with redirected_stdout():
+    from pkg.agent_tools.poi_search import poi_search as poi_search_func
 
 app = FastMCP("poi_search")
 
@@ -41,19 +44,20 @@ def poi_search(
         page_size: 每页数量
         page_num: 页码
     """
-    return poi_search_func(
-        search_type=search_type,
-        keywords=keywords,
-        location=location,
-        radius=radius,
-        polygon=polygon,
-        poi_id=poi_id,
-        types=types,
-        region=region,
-        city_limit=city_limit,
-        page_size=page_size,
-        page_num=page_num
-    )
+    with redirected_stdout():
+        return poi_search_func(
+            search_type=search_type,
+            keywords=keywords,
+            location=location,
+            radius=radius,
+            polygon=polygon,
+            poi_id=poi_id,
+            types=types,
+            region=region,
+            city_limit=city_limit,
+            page_size=page_size,
+            page_num=page_num
+        )
 
 if __name__ == "__main__":
     app.run(transport="stdio")

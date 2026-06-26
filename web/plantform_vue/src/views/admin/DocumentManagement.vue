@@ -50,6 +50,18 @@
             </el-tag>
           </template>
         </el-table-column>
+
+        <el-table-column label="处理结果" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.status === 3" class="failure-text">
+              {{ row.failure_reason || '处理未完成，可重新处理' }}
+            </span>
+            <span v-else-if="row.status === 1" class="muted-text">
+              {{ getProcessingStageText(row.processing_stage) }}
+            </span>
+            <span v-else class="muted-text">-</span>
+          </template>
+        </el-table-column>
         
         <el-table-column label="权限" width="180">
           <template #default="{ row }">
@@ -66,13 +78,13 @@
         
         <el-table-column prop="chunk_count" label="分块数" width="100" />
         
-        <el-table-column prop="uploaded_at" label="上传时间" width="180">
+        <el-table-column prop="updated_at" label="最近更新" width="180">
           <template #default="{ row }">
-            {{ formatDate(row.uploaded_at) }}
+            {{ formatDate(row.updated_at || row.uploaded_at) }}
           </template>
         </el-table-column>
         
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
             <el-button
               text
@@ -81,6 +93,16 @@
               @click.stop="handleViewDetail(row)"
             >
               查看
+            </el-button>
+            <el-button
+              v-if="row.status === 1 || row.status === 3"
+              text
+              type="warning"
+              size="small"
+              :loading="retryingUuid === row.uuid"
+              @click.stop="handleRetry(row)"
+            >
+              重新处理
             </el-button>
             <el-button
               text
@@ -177,7 +199,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { getDocumentList, deleteDocument, uploadDocument } from '@/api'
+import { getDocumentList, deleteDocument, uploadDocument, retryDocumentProcessing } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Upload, RefreshRight, Document, User, Lock, InfoFilled, View } from '@element-plus/icons-vue'
 import CustomPagination from '@/components/public/CustomPagination.vue'
@@ -190,6 +212,7 @@ const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 const searchKeyword = ref('')
+const retryingUuid = ref('')
 
 // 上传相关
 const showUploadDialog = ref(false)
@@ -231,6 +254,16 @@ const getStatusType = (status) => {
     3: 'danger'     // 处理失败
   }
   return typeMap[status] || 'info'
+}
+
+const getProcessingStageText = (stage) => {
+  const textMap = {
+    queued: '等待处理',
+    processing: '正在处理',
+    completed: '处理完成',
+    failed: '处理失败'
+  }
+  return textMap[stage] || '等待处理'
 }
 
 // 获取文档列表
@@ -419,6 +452,19 @@ const handleViewDetail = (document) => {
   router.push(`/admin/documents/${document.uuid}`)
 }
 
+const handleRetry = async (document) => {
+  try {
+    retryingUuid.value = document.uuid
+    const result = await retryDocumentProcessing(document.uuid)
+    ElMessage.success(result?.message || '已重新提交处理')
+    await fetchDocumentList()
+  } catch (error) {
+    ElMessage.error('重新处理失败')
+  } finally {
+    retryingUuid.value = ''
+  }
+}
+
 // 打开 3D 视图
 const handleOpen3DView = () => {
   router.push('/documents/3d')
@@ -532,6 +578,14 @@ onMounted(() => {
 
 .file-name {
   transition: all 0.3s ease;
+}
+
+.failure-text {
+  color: #f56c6c;
+}
+
+.muted-text {
+  color: var(--text-tertiary);
 }
 
 .pagination-wrapper {

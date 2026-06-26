@@ -7,7 +7,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from mcp.server import FastMCP
 from typing import Dict, Any
-from pkg.agent_tools.geocode import geocode as geocode_func
+from pkg.utils.mcp_stdio_guard import redirected_stdout
+
+with redirected_stdout():
+    from pkg.agent_tools.geocode import geocode as geocode_func
 
 app = FastMCP("geocode")
 
@@ -27,12 +30,13 @@ def geocode(
         city: 指定查询的城市（地理编码时可选）
         extensions: 返回结果控制（base/all）
     """
-    return geocode_func(
-        address=address,
-        location=location,
-        city=city,
-        extensions=extensions
-    )
+    with redirected_stdout():
+        return geocode_func(
+            address=address,
+            location=location,
+            city=city,
+            extensions=extensions
+        )
 
 if __name__ == "__main__":
     app.run(transport="stdio")

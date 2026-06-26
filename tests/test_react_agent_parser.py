@@ -1,5 +1,6 @@
 import unittest
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.agents import AgentFinish
 
 from internal.agent.react_agent import TolerantReActOutputParser
@@ -13,6 +14,22 @@ class TolerantReActOutputParserTest(unittest.TestCase):
 
         self.assertIsInstance(parsed, AgentFinish)
         self.assertIn("耿浩的实习经历", parsed.return_values["output"])
+
+    def test_incomplete_action_trace_is_not_treated_as_final_answer(self):
+        parser = TolerantReActOutputParser()
+
+        with self.assertRaises(OutputParserException):
+            parser.parse(
+                "用户想了解如何自制一个深度学习框架，这是一个技术性较强的问题。我需要从知识库或网络中搜索相关资料来提供详细指导。\n\nAction"
+            )
+
+    def test_search_intent_text_is_not_treated_as_final_answer(self):
+        parser = TolerantReActOutputParser()
+
+        with self.assertRaises(OutputParserException):
+            parser.parse(
+                "用户想了解如何自制一个深度学习框架，需要提供系统性的指导。我可以先搜索知识库中是否有相关文档，同时也可以搜索网页获取最新资料。"
+            )
 
 
 if __name__ == "__main__":

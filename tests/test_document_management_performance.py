@@ -208,7 +208,7 @@ class DocumentManagementPerformanceTest(unittest.TestCase):
             "permission": 0,
         })
 
-        processor._update_document_status_sync.assert_called_once()
+        self.assertEqual(processor._update_document_status_sync.call_count, 2)
         _, kwargs = processor._update_document_status_sync.call_args
         self.assertEqual(kwargs["content"], "完整正文")
         self.assertEqual(kwargs["page"], 3)

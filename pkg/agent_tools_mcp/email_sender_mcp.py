@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from mcp.server import FastMCP
 from typing import Dict, Any, Optional
+from pkg.utils.mcp_stdio_guard import redirected_stdout
 
 app = FastMCP("email_sender")
 
@@ -33,8 +34,9 @@ def email_sender(
         Dict: 发送结果
     """
     try:
-        from pkg.utils.email_service import email_service
-        import re
+        with redirected_stdout():
+            from pkg.utils.email_service import email_service
+            import re
         
         email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
         if not re.match(email_pattern, to_email):
@@ -44,11 +46,12 @@ def email_sender(
             }
         
         if send_captcha:
-            result = email_service.send_captcha(
-                email=to_email,
-                expire_minutes=5,
-                save_to_redis=True
-            )
+            with redirected_stdout():
+                result = email_service.send_captcha(
+                    email=to_email,
+                    expire_minutes=5,
+                    save_to_redis=True
+                )
             if result["success"]:
                 return {
                     "success": True,
@@ -69,13 +72,14 @@ def email_sender(
             if not content and html_content:
                 content = re.sub(r'<[^>]+>', '', html_content).strip()
             
-            success = email_service.send_mail(
-                recipient=to_email,
-                subject=subject,
-                message=content,
-                html_message=html_content,
-                debug=False
-            )
+            with redirected_stdout():
+                success = email_service.send_mail(
+                    recipient=to_email,
+                    subject=subject,
+                    message=content,
+                    html_message=html_content,
+                    debug=False
+                )
             
             if success:
                 return {
