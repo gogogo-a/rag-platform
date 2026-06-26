@@ -3,11 +3,27 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 import json
 import os
 import random
+import re
+
+
+EVALUATION_TYPES = ("rag", "normal_reply", "long_context", "tool_call", "multi_agent")
+EVALUATION_TYPE_LABELS = {
+    "rag": "RAG 评估",
+    "normal_reply": "正常回复评估",
+    "long_context": "长上下文评估",
+    "tool_call": "工具调用评估",
+    "multi_agent": "多 Agent 评估",
+}
+LLM_SCORE_WEIGHT = 0.8
+RULE_SCORE_WEIGHT = 0.2
+RERANK_SCORE_CENTER = 0.0
+RERANK_SCORE_SCALE = 2.0
 
 
 class RAGASEvaluator:
@@ -137,6 +153,62 @@ class RAGASEvaluator:
             raise RuntimeError("RAGAS 向量模型初始化失败") from exc
 
 
+class LLMQualityEvaluator:
+    """使用模型给回答质量打分。"""
+
+    async def evaluate(
+        self,
+        question: str,
+        answer: str,
+        contexts: Sequence[str],
+        evaluation_type: str = "rag",
+    ) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._evaluate_sync, question, answer, contexts, evaluation_type)
+
+    def _evaluate_sync(
+        self,
+        question: str,
+        answer: str,
+        contexts: Sequence[str],
+        evaluation_type: str,
+    ) -> Dict[str, Any]:
+        try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+            from pkg.constants.constants import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
+            if not DEEPSEEK_API_KEY:
+                raise RuntimeError("评估模型未配置")
+            from langchain_openai import ChatOpenAI
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError("评估模型初始化失败") from exc
+
+        llm = ChatOpenAI(
+            model=os.getenv("EVALUATION_LLM_MODEL", os.getenv("RAGAS_LLM_MODEL", "deepseek-chat")),
+            openai_api_key=DEEPSEEK_API_KEY,
+            openai_api_base=DEEPSEEK_BASE_URL,
+            temperature=0,
+            request_timeout=60,
+        )
+        context_text = "\n\n".join([text for text in contexts if text])[:8000]
+        messages = [
+            SystemMessage(content=(
+                "你负责评估 AI 回答质量。请只返回 JSON，字段为 score 和 reason。"
+                "score 必须是 0 到 1 的数字，1 表示质量最高。"
+                "reason 用中文说明评分原因，不要提及接口、代码、调试或系统实现。"
+            )),
+            HumanMessage(content=(
+                f"评估类型：{EVALUATION_TYPE_LABELS.get(evaluation_type, evaluation_type)}\n"
+                f"用户问题：{question}\n"
+                f"AI 回答：{answer}\n"
+                f"参考内容：{context_text or '无'}"
+            )),
+        ]
+        response = llm.invoke(messages)
+        content = getattr(response, "content", str(response))
+        return _parse_llm_quality_result(content)
+
+
 class RAGEvaluationService:
     """批量评估当前 RAG 检索结果。"""
 
@@ -148,6 +220,7 @@ class RAGEvaluationService:
         config_model: Any = None,
         queue_producer: Any = None,
         ragas_evaluator: Optional[RAGASEvaluator] = None,
+        llm_quality_evaluator: Optional[LLMQualityEvaluator] = None,
         context_recall_threshold: float = 0.75,
         context_precision_threshold: float = 0.60,
     ):
@@ -173,6 +246,7 @@ class RAGEvaluationService:
         self.config_model = config_model
         self.queue_producer = queue_producer
         self.ragas_evaluator = ragas_evaluator or RAGASEvaluator()
+        self.llm_quality_evaluator = llm_quality_evaluator or LLMQualityEvaluator()
         self.context_recall_threshold = context_recall_threshold
         self.context_precision_threshold = context_precision_threshold
         self._config = {
@@ -180,7 +254,7 @@ class RAGEvaluationService:
             "ragas_queue_enabled": True,
             "ragas_sample_rate": 1.0,
             "ragas_max_chunks_per_question": 3,
-            "ragas_min_retrieval_score": 0.0,
+            "ragas_min_retrieval_score": 0.05,
         }
 
     def update_config(self, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -326,9 +400,15 @@ class RAGEvaluationService:
 
             document = _format_document(result)
             vector_score = float(result.get("vector_score", result.get("score", 0.0)) or 0.0)
-            rerank_score = float(result.get("rerank_score", 0.0) or 0.0)
-            overall_score = rerank_score if rerank_score else vector_score
-            should_queue = start_ragas and self._should_queue(overall_score, eligible_count, config)
+            raw_rerank_score = result.get("rerank_score")
+            rerank_score = float(raw_rerank_score or 0.0)
+            rule_calibration = _calibrate_rule_score(
+                rerank_score=rerank_score,
+                vector_score=vector_score,
+                has_rerank=raw_rerank_score is not None,
+            )
+            rule_score = rule_calibration["rule_score"]
+            should_queue = start_ragas and self._should_queue(rule_score, eligible_count, config)
             if should_queue:
                 eligible_count += 1
             queue_status = "queued" if should_queue else "skipped"
@@ -348,11 +428,16 @@ class RAGEvaluationService:
                 retrieved_text=text,
                 vector_score=vector_score,
                 rerank_score=rerank_score,
+                evaluation_type="rag",
+                llm_score=0.0,
+                rule_score=rule_score,
+                score_reason="",
+                score_breakdown=_build_score_breakdown(0.0, rule_score, rule_calibration),
                 faithfulness=0.0,
                 answer_relevance=0.0,
                 context_precision=0.0,
                 context_recall=0.0,
-                overall_score=overall_score,
+                overall_score=rule_score,
                 evaluator="ragas",
                 comment="",
                 dataset_type="production",
@@ -408,6 +493,24 @@ class RAGEvaluationService:
                 record.answer_relevance = scores.get("answer_relevance") or 0.0
                 record.context_precision = scores.get("context_precision") or 0.0
                 record.context_recall = 0.0
+                evaluation_type = _record_evaluation_type(record)
+                rule_calibration = _record_rule_calibration(record)
+                rule_score = rule_calibration["rule_score"]
+                quality = await self.llm_quality_evaluator.evaluate(
+                    question=record.question or "",
+                    answer=record.answer or "",
+                    contexts=[record.retrieved_text or ""],
+                    evaluation_type=evaluation_type,
+                )
+                llm_score = _clamp_score(quality.get("score", 0.0))
+                score_reason = str(quality.get("reason") or "").strip()
+                record.evaluation_type = evaluation_type
+                record.llm_score = llm_score
+                record.rule_score = rule_score
+                record.overall_score = _combine_scores(llm_score, rule_score)
+                record.score_reason = score_reason
+                record.score_breakdown = _build_score_breakdown(llm_score, rule_score, rule_calibration)
+                record.comment = score_reason
                 record.queue_status = "completed"
                 record.ragas_status = "completed"
                 record.ragas_error = ""
@@ -415,6 +518,13 @@ class RAGEvaluationService:
             except Exception as exc:
                 from log import logger
                 logger.error(f"RAGAS 评估执行失败: {exc}", exc_info=True)
+                record.evaluation_type = _record_evaluation_type(record)
+                record.llm_score = getattr(record, "llm_score", 0.0) or 0.0
+                rule_calibration = _record_rule_calibration(record)
+                record.rule_score = rule_calibration["rule_score"]
+                record.overall_score = getattr(record, "overall_score", record.rule_score) or record.rule_score
+                record.score_reason = getattr(record, "score_reason", "") or ""
+                record.score_breakdown = getattr(record, "score_breakdown", {}) or _build_score_breakdown(record.llm_score, record.rule_score, rule_calibration)
                 record.queue_status = "failed"
                 record.ragas_status = "failed"
                 record.ragas_error = _format_ragas_error(exc)
@@ -457,6 +567,25 @@ class RAGEvaluationService:
         page_size: int = 20,
         keyword: Optional[str] = None,
         ragas_status: Optional[str] = None,
+        evaluation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return await self.get_evaluation_management_list(
+            page=page,
+            page_size=page_size,
+            keyword=keyword,
+            ragas_status=ragas_status,
+            evaluation_id=evaluation_id,
+            evaluation_type="rag",
+        )
+
+    async def get_evaluation_management_list(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        keyword: Optional[str] = None,
+        ragas_status: Optional[str] = None,
+        evaluation_id: Optional[str] = None,
+        evaluation_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         query = self.evaluation_model.find()
         try:
@@ -468,10 +597,17 @@ class RAGEvaluationService:
                 pass
         records = await query.to_list()
         records = sorted(records, key=lambda item: getattr(item, "created_at", datetime.min), reverse=True)
-        filtered = [
-            record for record in records
-            if getattr(record, "target_type", "") == "rag_chunk"
-        ]
+        filtered = list(records)
+        if evaluation_id:
+            filtered = [
+                record for record in filtered
+                if str(getattr(record, "id", "") or "") == evaluation_id
+            ]
+        if evaluation_type:
+            filtered = [
+                record for record in filtered
+                if _record_evaluation_type(record) == evaluation_type
+            ]
         if keyword:
             filtered = [
                 record for record in filtered
@@ -495,6 +631,10 @@ class RAGEvaluationService:
         running = [item for item in filtered if getattr(item, "queue_status", getattr(item, "ragas_status", "")) == "running"]
         skipped = [item for item in filtered if getattr(item, "queue_status", getattr(item, "ragas_status", "")) == "skipped"]
         failed = [item for item in filtered if getattr(item, "queue_status", getattr(item, "ragas_status", "")) == "failed"]
+        type_counts = {
+            item_type: sum(1 for record in records if _record_evaluation_type(record) == item_type)
+            for item_type in EVALUATION_TYPES
+        }
 
         return {
             "total": total,
@@ -505,7 +645,9 @@ class RAGEvaluationService:
             "running_count": len(running),
             "failed_count": len(failed),
             "skipped_count": len(skipped),
-            "avg_retrieval_score": _average([getattr(item, "overall_score", 0.0) or 0.0 for item in filtered]),
+            "type_counts": type_counts,
+            "avg_overall_score": _average([_record_overall_score(item) for item in filtered]),
+            "avg_retrieval_score": _average([_record_rule_score(item) for item in filtered]),
             "avg_ragas_score": _average([
                 (
                     (getattr(item, "faithfulness", 0.0) or 0.0)
@@ -533,6 +675,11 @@ class RAGEvaluationService:
             context_precision=item["context_precision"],
             context_recall=item["context_recall"],
             overall_score=overall_score,
+            evaluation_type="rag",
+            llm_score=0.0,
+            rule_score=overall_score,
+            score_reason=item["reason"],
+            score_breakdown=_build_score_breakdown(0.0, overall_score),
             evaluator="ragas",
             comment=item["reason"],
             dataset_type="benchmark",
@@ -562,8 +709,15 @@ def _format_document(result: Dict[str, Any]) -> Dict[str, Any]:
 
 def _serialize_rag_record(record: Any) -> Dict[str, Any]:
     created_at = getattr(record, "created_at", None)
+    evaluation_type = _record_evaluation_type(record)
+    rule_calibration = _record_rule_calibration(record)
+    rule_score = rule_calibration["rule_score"]
+    llm_score = _clamp_score(getattr(record, "llm_score", 0.0) or 0.0)
+    score_reason = getattr(record, "score_reason", None) or getattr(record, "comment", "") or ""
     return {
         "id": str(getattr(record, "id", "") or ""),
+        "evaluation_type": evaluation_type,
+        "evaluation_type_label": EVALUATION_TYPE_LABELS.get(evaluation_type, "评估"),
         "question": getattr(record, "question", "") or "",
         "answer": getattr(record, "answer", "") or "",
         "retrieved_text": getattr(record, "retrieved_text", "") or "",
@@ -572,7 +726,11 @@ def _serialize_rag_record(record: Any) -> Dict[str, Any]:
         "chunk_index": getattr(record, "chunk_index", 0) or 0,
         "vector_score": getattr(record, "vector_score", 0.0) or 0.0,
         "rerank_score": getattr(record, "rerank_score", 0.0) or 0.0,
-        "overall_score": getattr(record, "overall_score", 0.0) or 0.0,
+        "overall_score": _record_overall_score(record),
+        "llm_score": llm_score,
+        "rule_score": rule_score,
+        "score_reason": score_reason,
+        "score_breakdown": _record_score_breakdown(record, llm_score, rule_score, rule_calibration),
         "faithfulness": getattr(record, "faithfulness", 0.0) or 0.0,
         "answer_relevance": getattr(record, "answer_relevance", 0.0) or 0.0,
         "context_precision": getattr(record, "context_precision", 0.0) or 0.0,
@@ -590,6 +748,148 @@ def _serialize_rag_record(record: Any) -> Dict[str, Any]:
 
 def _format_datetime(value: Any) -> str:
     return value.isoformat() if hasattr(value, "isoformat") else ""
+
+
+def _record_evaluation_type(record: Any) -> str:
+    value = getattr(record, "evaluation_type", "") or ""
+    if value in EVALUATION_TYPES:
+        return value
+    if (
+        getattr(record, "target_type", "") == "rag_chunk"
+        or getattr(record, "retrieved_text", "")
+        or getattr(record, "rerank_score", 0.0)
+        or getattr(record, "vector_score", 0.0)
+    ):
+        return "rag"
+    return "normal_reply"
+
+
+def _record_rule_score(record: Any) -> float:
+    return _record_rule_calibration(record)["rule_score"]
+
+
+def _record_rule_calibration(record: Any) -> Dict[str, Any]:
+    value = getattr(record, "rule_score", None)
+    if value is not None:
+        breakdown = getattr(record, "score_breakdown", {}) or {}
+        return {
+            "rule_score": _clamp_score(value),
+            "rule_score_source": breakdown.get("rule_score_source", "stored"),
+            "rule_score_raw": _safe_float(breakdown.get("rule_score_raw", value)),
+            "rule_score_mapping": breakdown.get("rule_score_mapping", "stored"),
+            "rule_score_center": _safe_float(breakdown.get("rule_score_center", RERANK_SCORE_CENTER)),
+            "rule_score_scale": _safe_float(breakdown.get("rule_score_scale", RERANK_SCORE_SCALE)),
+        }
+    rerank_score = getattr(record, "rerank_score", 0.0) or 0.0
+    vector_score = getattr(record, "vector_score", 0.0) or 0.0
+    return _calibrate_rule_score(rerank_score=rerank_score, vector_score=vector_score)
+
+
+def _record_overall_score(record: Any) -> float:
+    llm_score = _clamp_score(getattr(record, "llm_score", 0.0) or 0.0)
+    rule_score = _record_rule_score(record)
+    if llm_score or getattr(record, "score_breakdown", None):
+        return _combine_scores(llm_score, rule_score)
+    stored_overall = _safe_float(getattr(record, "overall_score", 0.0))
+    if stored_overall < 0:
+        return rule_score
+    return _clamp_score(stored_overall or rule_score)
+
+
+def _calibrate_rule_score(rerank_score: Any = None, vector_score: Any = None, has_rerank: Optional[bool] = None) -> Dict[str, Any]:
+    rerank_value = _safe_float(rerank_score)
+    if has_rerank is None:
+        has_rerank = rerank_score is not None and rerank_value != 0.0
+    if has_rerank:
+        calibrated = 1.0 / (1.0 + math.exp(-((rerank_value - RERANK_SCORE_CENTER) / RERANK_SCORE_SCALE)))
+        return {
+            "rule_score": round(_clamp_score(calibrated), 4),
+            "rule_score_source": "rerank_score",
+            "rule_score_raw": rerank_value,
+            "rule_score_mapping": "sigmoid",
+            "rule_score_center": RERANK_SCORE_CENTER,
+            "rule_score_scale": RERANK_SCORE_SCALE,
+        }
+
+    vector_value = _safe_float(vector_score)
+    return {
+        "rule_score": _clamp_score(vector_value),
+        "rule_score_source": "vector_score",
+        "rule_score_raw": vector_value,
+        "rule_score_mapping": "clamp",
+        "rule_score_center": RERANK_SCORE_CENTER,
+        "rule_score_scale": RERANK_SCORE_SCALE,
+    }
+
+
+def _combine_scores(llm_score: Any, rule_score: Any) -> float:
+    combined = _clamp_score(llm_score) * LLM_SCORE_WEIGHT + _clamp_score(rule_score) * RULE_SCORE_WEIGHT
+    return round(combined, 4)
+
+
+def _record_score_breakdown(record: Any, llm_score: Any, rule_score: Any, rule_calibration: Dict[str, Any]) -> Dict[str, Any]:
+    breakdown = dict(getattr(record, "score_breakdown", {}) or {})
+    if not breakdown.get("rule_score_mapping"):
+        breakdown.update(_build_score_breakdown(llm_score, rule_score, rule_calibration))
+    return breakdown
+
+
+def _build_score_breakdown(llm_score: Any, rule_score: Any, rule_calibration: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    rule_calibration = rule_calibration or {
+        "rule_score_source": "",
+        "rule_score_raw": _safe_float(rule_score),
+        "rule_score_mapping": "stored",
+        "rule_score_center": RERANK_SCORE_CENTER,
+        "rule_score_scale": RERANK_SCORE_SCALE,
+    }
+    return {
+        "llm_score": _clamp_score(llm_score),
+        "rule_score": _clamp_score(rule_score),
+        "rule_score_source": rule_calibration.get("rule_score_source", ""),
+        "rule_score_raw": _safe_float(rule_calibration.get("rule_score_raw", rule_score)),
+        "rule_score_mapping": rule_calibration.get("rule_score_mapping", ""),
+        "rule_score_center": _safe_float(rule_calibration.get("rule_score_center", RERANK_SCORE_CENTER)),
+        "rule_score_scale": _safe_float(rule_calibration.get("rule_score_scale", RERANK_SCORE_SCALE)),
+        "weights": {
+            "llm": LLM_SCORE_WEIGHT,
+            "rule": RULE_SCORE_WEIGHT,
+        },
+    }
+
+
+def _parse_llm_quality_result(content: str) -> Dict[str, Any]:
+    text = (content or "").strip()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{[\s\S]*\}", text)
+        if not match:
+            raise RuntimeError("评估结果格式无效")
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("评估结果格式无效") from exc
+    score = _clamp_score(data.get("score", 0.0))
+    reason = str(data.get("reason") or "").strip()
+    if not reason:
+        raise RuntimeError("评估结果缺少原因")
+    return {"score": score, "reason": reason}
+
+
+def _clamp_score(value: Any) -> float:
+    score = _safe_float(value)
+    if score < 0:
+        return 0.0
+    if score > 1:
+        return 1.0
+    return round(score, 4)
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _build_summary(items: Sequence[Dict[str, Any]]) -> Dict[str, Any]:

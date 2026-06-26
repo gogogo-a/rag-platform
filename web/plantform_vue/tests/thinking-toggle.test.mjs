@@ -11,5 +11,6 @@ const inputSource = readFileSync(resolve(root, 'src/components/chat/MessageInput
 
 assert.match(storeSource, /showThinking:\s*true/)
 assert.match(inputSource, /\{\{\s*showThinking\s*\?\s*'隐藏过程'\s*:\s*'显示过程'\s*\}\}/)
+assert.doesNotMatch(inputSource, /<el-tooltip[^>]*>\s*<el-button[\s\S]*?隐藏过程/)
 
 console.log('thinking toggle defaults verified')

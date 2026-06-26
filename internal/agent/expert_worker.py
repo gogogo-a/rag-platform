@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any, Callable, Dict, List, Optional
 
 from internal.agent.expert_agent_registry import ExpertAgentRegistry
@@ -41,7 +42,7 @@ class ExpertTaskWorker:
                 "expert_key": task.get("expert_key"),
                 "answer": answer_text,
                 "process_summary": payload.get("process_summary", ""),
-                "raw_process": payload.get("raw_process", []),
+                "raw_process": self._merge_processes(payload.get("raw_process", [])),
                 "documents": payload.get("documents", []),
                 "rag_results": payload.get("rag_results", []),
                 "success": success,
@@ -111,7 +112,7 @@ class ExpertTaskWorker:
                 "documents": documents,
                 "rag_results": rag_results,
                 "process_summary": self._summarize_process(raw_process),
-                "raw_process": raw_process,
+                "raw_process": self._merge_processes(raw_process),
                 "confidence": 1,
             },
             ensure_ascii=False,
@@ -153,6 +154,38 @@ class ExpertTaskWorker:
                     })
 
         return expert_callback
+
+    @classmethod
+    def _merge_processes(cls, raw_process: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        merged: List[Dict[str, Any]] = []
+        for item in raw_process:
+            phase = str(item.get("phase") or "").strip()
+            content = str(item.get("content") or "").strip()
+            if not phase or not content or cls._is_process_marker_only(content):
+                continue
+            if phase == "thought" and merged and merged[-1].get("phase") == phase:
+                merged[-1]["content"] = cls._join_process_text(str(merged[-1].get("content", "")), content)
+                continue
+            merged.append({**item, "phase": phase, "content": content})
+        return merged
+
+    @staticmethod
+    def _is_process_marker_only(text: str) -> bool:
+        return re.match(r"^\s*(thought|action|action input|observation|final answer|finalanswer|思考|操作|观测|输出|:|：)\s*$", str(text or ""), re.I) is not None
+
+    @staticmethod
+    def _join_process_text(left: str, right: str) -> str:
+        first = str(left or "").strip()
+        second = str(right or "").strip()
+        if not first:
+            return second
+        if not second:
+            return first
+        if re.match(r"^[，。！？、；：,.!?;:]", second):
+            return f"{first}{second}"
+        if re.search(r"[（(\[{《“‘]$", first):
+            return f"{first}{second}"
+        return re.sub(r"\s+", " ", f"{first} {second}").strip()
 
     @staticmethod
     def _summarize_process(raw_process: List[Dict[str, Any]]) -> str:

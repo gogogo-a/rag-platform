@@ -1,5 +1,13 @@
 import request from './request'
 
+export function getEvaluationList(params) {
+  return request({
+    url: '/evaluations',
+    method: 'get',
+    params
+  })
+}
+
 export function getRAGEvaluationList(params) {
   return request({
     url: '/evaluations/rag',

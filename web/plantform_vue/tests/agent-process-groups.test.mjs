@@ -259,4 +259,34 @@ assert.deepEqual(
   ['位置专家', '搜索专家']
 )
 
+const tokenizedThoughtMessage = {
+  role: 'assistant',
+  content: '',
+  agentManifest: [
+    { agentKey: 'location', agentName: '位置专家', tools: ['weather_query'] }
+  ]
+}
+
+for (const [index, content] of [
+  'Thought',
+  ':',
+  '搜索一下北京',
+  '明天天气，并说明适合',
+  '去哪里玩'
+].entries()) {
+  applyAgentProcess(tokenizedThoughtMessage, {
+    scope: 'expert',
+    agent_key: 'location',
+    agent_name: '位置专家',
+    phase: 'thought',
+    content,
+    step_index: index + 1
+  })
+}
+
+assert.deepEqual(
+  getExpertProcessGroups(tokenizedThoughtMessage)[0].processes.map((item) => `${item.phase}:${item.content}`),
+  ['thought:搜索一下北京 明天天气，并说明适合 去哪里玩']
+)
+
 console.log('agent process grouping verified')

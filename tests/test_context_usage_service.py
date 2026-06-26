@@ -120,6 +120,41 @@ class ContextUsageServiceTest(unittest.TestCase):
         self.assertEqual(result["remaining_tokens"], result["context_window"] - result["used_tokens"])
         self.assertEqual(result["count_type"], "estimated")
 
+    def test_deepseek_chat_uses_official_context_window_metadata(self):
+        FakeMessageModel.messages = [self.user_msg]
+
+        with patch("internal.service.message.context_usage_service.MessageModel", FakeMessageModel), \
+             patch("internal.service.message.context_builder.MessageModel", FakeMessageModel), \
+             patch.object(context_usage_service, "_load_deepseek_tokenizer", return_value=None), \
+             patch.object(context_usage_service, "count_tokens", return_value=1), \
+             patch.object(context_usage_service, "_get_tools_snapshot", return_value=("", "")):
+            result = asyncio.run(context_usage_service.get_session_context_usage("session-1"))
+
+        self.assertEqual(result["context_window"], 1_000_000)
+        self.assertEqual(result["context_window_source"], "official")
+        self.assertEqual(result["primary_agent_usage"]["context_window"], 1_000_000)
+
+    def test_deepseek_model_default_window_matches_official_metadata(self):
+        from pkg.model_list import DEEPSEEK_CHAT
+
+        self.assertEqual(DEEPSEEK_CHAT.context_window, 1_000_000)
+
+    def test_section_percent_uses_context_window_not_used_tokens(self):
+        self.ai_msg.extra_data = {"usage": {"prompt_tokens": 100}}
+        FakeMessageModel.messages = [self.user_msg, self.ai_msg]
+
+        with patch("internal.service.message.context_usage_service.MessageModel", FakeMessageModel), \
+             patch("internal.service.message.context_builder.MessageModel", FakeMessageModel), \
+             patch.object(context_usage_service, "_load_deepseek_tokenizer", return_value=None), \
+             patch.object(context_usage_service, "count_tokens", return_value=500), \
+             patch.object(context_usage_service, "get_context_window", return_value=1000):
+            result = asyncio.run(context_usage_service.get_session_context_usage("session-1"))
+
+        self.assertEqual(result["used_tokens"], 100)
+        self.assertTrue(result["sections"])
+        self.assertTrue(all(section["percent"] == 50 for section in result["sections"]))
+        self.assertEqual(result["primary_agent_usage"]["percent"], 10)
+
     def test_context_usage_with_summary_counts_latest_summary_and_new_messages(self):
         FakeMessageModel.messages = [self.user_msg, self.ai_msg, self.summary_msg, self.new_msg]
 
@@ -150,6 +185,35 @@ class ContextUsageServiceTest(unittest.TestCase):
         self.assertEqual(result["used_tokens"], 1234)
         self.assertEqual(result["source"], "actual")
         self.assertEqual(result["count_type"], "official")
+
+    def test_context_usage_restores_child_agent_usages_from_latest_message(self):
+        self.ai_msg.extra_data = {
+            "usage": {"prompt_tokens": 120},
+            "agent_context_usage": {
+                "child_agent_usages": [
+                    {
+                        "agent_key": "search",
+                        "agent_name": "搜索专家",
+                        "used_tokens": 40,
+                        "context_window": 1000,
+                        "percent": 4,
+                        "sections": [{"type": "current_task", "title": "当前任务", "tokens": 40, "percent": 4, "content": "北京天气"}],
+                    }
+                ]
+            }
+        }
+        FakeMessageModel.messages = [self.user_msg, self.ai_msg]
+
+        with patch("internal.service.message.context_usage_service.MessageModel", FakeMessageModel), \
+             patch("internal.service.message.context_builder.MessageModel", FakeMessageModel), \
+             patch.object(context_usage_service, "_load_deepseek_tokenizer", return_value=None), \
+             patch.object(context_usage_service, "count_tokens", return_value=1), \
+             patch.object(context_usage_service, "get_context_window", return_value=1000):
+            result = asyncio.run(context_usage_service.get_session_context_usage("session-1"))
+
+        self.assertEqual(result["child_agent_usages"][0]["agent_key"], "search")
+        self.assertEqual(result["child_agent_usages"][0]["agent_name"], "搜索专家")
+        self.assertEqual(result["primary_agent_usage"]["used_tokens"], 120)
 
     def test_percentage_is_capped_at_100(self):
         FakeMessageModel.messages = [self.user_msg]

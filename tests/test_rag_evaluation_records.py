@@ -1,9 +1,12 @@
 import asyncio
+import queue
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from internal.service.ai.ai_reply_service import AIReplyService
+from internal.service.ai.stream_parser import StreamParser
 from internal.service.evaluation.rag_evaluation_service import RAGEvaluationService
 from internal.service.evaluation.rag_evaluation_service import RAGASEvaluator
 
@@ -65,6 +68,19 @@ class FakeProductionRAGASEvaluator:
         }
 
 
+class FakeLLMQualityEvaluator:
+    async def evaluate(self, question, answer, contexts, evaluation_type="rag"):
+        return {
+            "score": 0.92,
+            "reason": "回答直接解决了问题，并且主要依据返回内容作答。",
+        }
+
+
+class FailingLLMQualityEvaluator:
+    async def evaluate(self, question, answer, contexts, evaluation_type="rag"):
+        raise RuntimeError("llm failed")
+
+
 class FailingProductionRAGASEvaluator:
     async def evaluate_production(self, question, answer, contexts):
         raise RuntimeError("ragas failed")
@@ -78,6 +94,10 @@ class FakeQueueProducer:
     def enqueue(self, record):
         self.messages.append(record)
         return self.success
+
+
+async def _collect_async_events(generator):
+    return [event async for event in generator]
 
 
 class FakeRAGASDependencyMissingEvaluator:
@@ -126,12 +146,87 @@ class RAGEvaluationRecordServiceTest(unittest.TestCase):
         self.assertEqual(records[0].chunk_index, 2)
         self.assertEqual(records[0].vector_score, 0.71)
         self.assertEqual(records[0].rerank_score, 0.86)
-        self.assertEqual(records[0].overall_score, 0.86)
+        self.assertEqual(records[0].overall_score, 0.6059)
+        self.assertEqual(records[0].evaluation_type, "rag")
+        self.assertEqual(records[0].llm_score, 0.0)
+        self.assertEqual(records[0].rule_score, 0.6059)
+        self.assertEqual(records[0].score_reason, "")
+        self.assertEqual(records[0].score_breakdown["rule_score_source"], "rerank_score")
+        self.assertEqual(records[0].score_breakdown["rule_score_raw"], 0.86)
+        self.assertEqual(records[0].score_breakdown["rule_score_mapping"], "sigmoid")
+        self.assertEqual(records[0].score_breakdown["rule_score_center"], 0.0)
+        self.assertEqual(records[0].score_breakdown["rule_score_scale"], 2.0)
+        self.assertEqual(records[0].score_breakdown["weights"], {"llm": 0.8, "rule": 0.2})
         self.assertEqual(records[0].ragas_status, "queued")
         self.assertEqual(records[0].queue_status, "queued")
         self.assertIsNotNone(records[0].queued_at)
         self.assertEqual(len(queue.messages), 1)
         records[0].insert.assert_awaited_once()
+
+    def test_rerank_logits_are_sigmoid_calibrated_for_rule_scores(self):
+        service = RAGEvaluationService(evaluation_model=FakeEvaluationRecord)
+
+        records = asyncio.run(service.save_rag_call_records(
+            question="LangGraph 有错误恢复实现吗？",
+            answer="回答内容",
+            session_id="session-1",
+            user_id="user-1",
+            message_id="message-1",
+            rag_results=[
+                {"text": "强无关片段", "metadata": {}, "rerank_score": -5.0},
+                {"text": "弱无关片段", "metadata": {}, "rerank_score": -3.0},
+                {"text": "边界片段", "metadata": {}, "rerank_score": 0.0},
+                {"text": "相关片段", "metadata": {}, "rerank_score": 3.0},
+                {"text": "向量片段", "metadata": {}, "vector_score": 0.71},
+            ],
+            start_ragas=False,
+        ))
+
+        self.assertAlmostEqual(records[0].rule_score, 0.0759)
+        self.assertAlmostEqual(records[1].rule_score, 0.1824)
+        self.assertAlmostEqual(records[2].rule_score, 0.5)
+        self.assertAlmostEqual(records[3].rule_score, 0.8176)
+        self.assertAlmostEqual(records[4].rule_score, 0.71)
+        self.assertEqual(records[0].score_breakdown["rule_score_source"], "rerank_score")
+        self.assertEqual(records[4].score_breakdown["rule_score_source"], "vector_score")
+        self.assertEqual(records[0].score_breakdown["rule_score_mapping"], "sigmoid")
+        self.assertEqual(records[4].score_breakdown["rule_score_mapping"], "clamp")
+
+    def test_ai_stream_forwards_tool_results_for_rag_evaluation(self):
+        event_queue = queue.Queue()
+        event_queue.put((
+            "tool_result",
+            {
+                "tool_name": "knowledge_search",
+                "documents": [{"uuid": "doc-1", "name": "制度说明.pdf"}],
+                "results": [
+                    {
+                        "text": "制度查询说明正文",
+                        "metadata": {"document_uuid": "doc-1", "filename": "制度说明.pdf"},
+                        "vector_score": 0.71,
+                    }
+                ],
+            },
+        ))
+
+        async def finished_task():
+            return "ok"
+
+        task = asyncio.ensure_future(finished_task())
+        asyncio.get_event_loop().run_until_complete(task)
+        events = asyncio.run(_collect_async_events(
+            AIReplyService()._process_event_queue(
+                event_queue,
+                task,
+                StreamParser(),
+                [],
+            )
+        ))
+
+        self.assertEqual(events[0]["event"], "documents")
+        self.assertEqual(events[0]["data"]["documents"][0]["uuid"], "doc-1")
+        self.assertEqual(events[1]["event"], "rag_results")
+        self.assertEqual(events[1]["data"]["results"][0]["text"], "制度查询说明正文")
 
     def test_no_rag_results_do_not_create_records(self):
         service = RAGEvaluationService(evaluation_model=FakeEvaluationRecord)
@@ -193,11 +288,14 @@ class RAGEvaluationRecordServiceTest(unittest.TestCase):
         service = RAGEvaluationService(
             evaluation_model=FakeEvaluationRecord,
             ragas_evaluator=FakeProductionRAGASEvaluator(),
+            llm_quality_evaluator=FakeLLMQualityEvaluator(),
         )
         record = FakeEvaluationRecord(
             question="制度怎么查询？",
             answer="可以在知识库查询。",
             retrieved_text="制度查询说明正文",
+            vector_score=0.71,
+            rerank_score=0.86,
             ragas_status="pending",
             created_at=datetime.now(),
         )
@@ -209,9 +307,43 @@ class RAGEvaluationRecordServiceTest(unittest.TestCase):
         self.assertEqual(record.answer_relevance, 0.76)
         self.assertEqual(record.context_precision, 0.91)
         self.assertEqual(record.context_recall, 0.0)
+        self.assertEqual(record.evaluation_type, "rag")
+        self.assertEqual(record.llm_score, 0.92)
+        self.assertEqual(record.rule_score, 0.6059)
+        self.assertAlmostEqual(record.overall_score, 0.8572)
+        self.assertEqual(record.score_reason, "回答直接解决了问题，并且主要依据返回内容作答。")
+        self.assertEqual(record.comment, "回答直接解决了问题，并且主要依据返回内容作答。")
+        self.assertEqual(record.score_breakdown["rule_score_source"], "rerank_score")
+        self.assertEqual(record.score_breakdown["rule_score_raw"], 0.86)
+        self.assertEqual(record.score_breakdown["rule_score_mapping"], "sigmoid")
+        self.assertEqual(record.score_breakdown["weights"], {"llm": 0.8, "rule": 0.2})
         self.assertEqual(record.ragas_status, "completed")
         self.assertEqual(record.ragas_error, "")
         self.assertEqual(record.save.await_count, 2)
+
+    def test_llm_quality_failure_marks_record_failed_without_raising(self):
+        service = RAGEvaluationService(
+            evaluation_model=FakeEvaluationRecord,
+            ragas_evaluator=FakeProductionRAGASEvaluator(),
+            llm_quality_evaluator=FailingLLMQualityEvaluator(),
+        )
+        record = FakeEvaluationRecord(
+            question="制度怎么查询？",
+            answer="可以在知识库查询。",
+            retrieved_text="制度查询说明正文",
+            vector_score=0.71,
+            rerank_score=0.86,
+            ragas_status="pending",
+            created_at=datetime.now(),
+        )
+
+        asyncio.run(service.run_ragas_for_records([record]))
+
+        self.assertEqual(record.queue_status, "failed")
+        self.assertEqual(record.ragas_status, "failed")
+        self.assertEqual(record.ragas_error, "评估失败")
+        self.assertEqual(record.llm_score, 0.0)
+        self.assertEqual(record.rule_score, 0.6059)
 
     def test_ragas_failure_marks_failed_without_raising(self):
         service = RAGEvaluationService(
@@ -258,7 +390,9 @@ class RAGEvaluationRecordServiceTest(unittest.TestCase):
         now = datetime.now()
         FakeEvaluationRecord.records = [
             SimpleNamespace(
+                id="eval-1",
                 target_type="rag_chunk",
+                evaluation_type="rag",
                 question="制度怎么查询？",
                 answer="可以在知识库查询。",
                 retrieved_text="制度查询说明正文",
@@ -268,6 +402,10 @@ class RAGEvaluationRecordServiceTest(unittest.TestCase):
                 vector_score=0.7,
                 rerank_score=0.8,
                 overall_score=0.8,
+                llm_score=0.9,
+                rule_score=0.4,
+                score_reason="回答准确。",
+                score_breakdown={"weights": {"llm": 0.8, "rule": 0.2}},
                 faithfulness=0.82,
                 answer_relevance=0.76,
                 context_precision=0.91,
@@ -282,6 +420,7 @@ class RAGEvaluationRecordServiceTest(unittest.TestCase):
                 created_at=now,
             ),
             SimpleNamespace(
+                id="eval-2",
                 target_type="rag_chunk",
                 question="闲聊问题",
                 answer="你好",
@@ -292,6 +431,10 @@ class RAGEvaluationRecordServiceTest(unittest.TestCase):
                 vector_score=0.0,
                 rerank_score=0.0,
                 overall_score=0.0,
+                llm_score=0.0,
+                rule_score=0.0,
+                score_reason="",
+                score_breakdown={},
                 faithfulness=0.0,
                 answer_relevance=0.0,
                 context_precision=0.0,
@@ -320,6 +463,197 @@ class RAGEvaluationRecordServiceTest(unittest.TestCase):
         self.assertEqual(data["pending_count"], 0)
         self.assertEqual(data["items"][0]["question"], "制度怎么查询？")
         self.assertEqual(data["items"][0]["retrieved_text"], "制度查询说明正文")
+        self.assertEqual(data["items"][0]["evaluation_type"], "rag")
+        self.assertEqual(data["items"][0]["llm_score"], 0.9)
+        self.assertEqual(data["items"][0]["rule_score"], 0.4)
+        self.assertEqual(data["items"][0]["score_reason"], "回答准确。")
+
+    def test_get_evaluation_management_list_filters_type_and_keeps_legacy_rag(self):
+        now = datetime.now()
+        FakeEvaluationRecord.records = [
+            SimpleNamespace(
+                id="eval-1",
+                target_type="rag_chunk",
+                question="制度怎么查询？",
+                answer="可以在知识库查询。",
+                retrieved_text="制度查询说明正文",
+                filename="制度说明.pdf",
+                document_uuid="doc-1",
+                chunk_index=1,
+                vector_score=0.7,
+                rerank_score=0.8,
+                overall_score=0.88,
+                llm_score=0.9,
+                rule_score=0.8,
+                score_reason="回答准确。",
+                score_breakdown={"weights": {"llm": 0.8, "rule": 0.2}},
+                faithfulness=0.82,
+                answer_relevance=0.76,
+                context_precision=0.91,
+                context_recall=0.0,
+                ragas_status="completed",
+                queue_status="completed",
+                ragas_error="",
+                queued_at=now,
+                started_at=now,
+                completed_at=now,
+                retry_count=0,
+                created_at=now,
+            ),
+            SimpleNamespace(
+                id="eval-2",
+                evaluation_type="normal_reply",
+                target_type="message",
+                question="你好",
+                answer="你好，有什么可以帮你？",
+                retrieved_text="",
+                filename="",
+                document_uuid="",
+                chunk_index=0,
+                vector_score=0.0,
+                rerank_score=0.0,
+                overall_score=0.75,
+                llm_score=0.75,
+                rule_score=0.0,
+                score_reason="回答礼貌但信息量较少。",
+                score_breakdown={"weights": {"llm": 0.8, "rule": 0.2}},
+                faithfulness=0.0,
+                answer_relevance=0.0,
+                context_precision=0.0,
+                context_recall=0.0,
+                ragas_status="completed",
+                queue_status="completed",
+                ragas_error="",
+                queued_at=now,
+                started_at=now,
+                completed_at=now,
+                retry_count=0,
+                created_at=now,
+            ),
+        ]
+        service = RAGEvaluationService(evaluation_model=FakeEvaluationRecord)
+
+        data = asyncio.run(service.get_evaluation_management_list(
+            page=1,
+            page_size=20,
+            evaluation_type="rag",
+        ))
+
+        self.assertEqual(data["total"], 1)
+        self.assertEqual(data["items"][0]["id"], "eval-1")
+        self.assertEqual(data["items"][0]["evaluation_type"], "rag")
+        self.assertEqual(data["type_counts"]["rag"], 1)
+        self.assertEqual(data["type_counts"]["normal_reply"], 1)
+
+    def test_legacy_negative_retrieval_scores_are_not_exposed_as_overall_scores(self):
+        now = datetime.now()
+        FakeEvaluationRecord.records = [
+            SimpleNamespace(
+                id="eval-legacy",
+                target_type="rag_chunk",
+                question="LangGraph 有错误恢复实现吗？",
+                answer="有，但默认不启用。",
+                retrieved_text="无关上下文",
+                filename="历史文档.md",
+                document_uuid="doc-legacy",
+                chunk_index=0,
+                vector_score=0.0,
+                rerank_score=-4.2,
+                overall_score=-4.2,
+                score_breakdown={},
+                faithfulness=0.0,
+                answer_relevance=0.0,
+                context_precision=0.0,
+                context_recall=0.0,
+                ragas_status="skipped",
+                queue_status="skipped",
+                ragas_error="",
+                queued_at=None,
+                started_at=None,
+                completed_at=None,
+                retry_count=0,
+                created_at=now,
+            ),
+        ]
+        service = RAGEvaluationService(evaluation_model=FakeEvaluationRecord)
+
+        data = asyncio.run(service.get_evaluation_management_list(
+            page=1,
+            page_size=20,
+            evaluation_type="rag",
+        ))
+
+        self.assertEqual(data["items"][0]["overall_score"], 0.1091)
+        self.assertEqual(data["items"][0]["rule_score"], 0.1091)
+        self.assertEqual(data["items"][0]["score_breakdown"]["rule_score_source"], "rerank_score")
+        self.assertEqual(data["items"][0]["score_breakdown"]["rule_score_raw"], -4.2)
+        self.assertEqual(data["items"][0]["score_breakdown"]["rule_score_mapping"], "sigmoid")
+        self.assertEqual(data["avg_overall_score"], 0.1091)
+
+    def test_get_rag_evaluation_list_filters_by_evaluation_id(self):
+        now = datetime.now()
+        FakeEvaluationRecord.records = [
+            SimpleNamespace(
+                id="eval-1",
+                target_type="rag_chunk",
+                question="制度怎么查询？",
+                answer="可以在知识库查询。",
+                retrieved_text="制度查询说明正文",
+                filename="制度说明.pdf",
+                document_uuid="doc-1",
+                chunk_index=1,
+                vector_score=0.7,
+                rerank_score=0.8,
+                overall_score=0.8,
+                faithfulness=0.82,
+                answer_relevance=0.76,
+                context_precision=0.91,
+                context_recall=0.0,
+                ragas_status="completed",
+                queue_status="completed",
+                ragas_error="",
+                queued_at=now,
+                started_at=now,
+                completed_at=now,
+                retry_count=0,
+                created_at=now,
+            ),
+            SimpleNamespace(
+                id="eval-2",
+                target_type="rag_chunk",
+                question="其他问题",
+                answer="其他回答",
+                retrieved_text="其他正文",
+                filename="其他.pdf",
+                document_uuid="doc-2",
+                chunk_index=0,
+                vector_score=0.0,
+                rerank_score=0.0,
+                overall_score=0.0,
+                faithfulness=0.0,
+                answer_relevance=0.0,
+                context_precision=0.0,
+                context_recall=0.0,
+                ragas_status="queued",
+                queue_status="queued",
+                ragas_error="",
+                queued_at=now,
+                started_at=None,
+                completed_at=None,
+                retry_count=0,
+                created_at=now,
+            ),
+        ]
+        service = RAGEvaluationService(evaluation_model=FakeEvaluationRecord)
+
+        data = asyncio.run(service.get_rag_evaluation_list(
+            page=1,
+            page_size=20,
+            evaluation_id="eval-2",
+        ))
+
+        self.assertEqual(data["total"], 1)
+        self.assertEqual(data["items"][0]["id"], "eval-2")
 
     def test_requeue_failed_record_marks_queued_and_enqueues(self):
         queue = FakeQueueProducer()
@@ -469,7 +803,8 @@ class RAGEvaluationRecordServiceTest(unittest.TestCase):
 
             start_consumer.assert_called_once()
             recover.assert_called_once()
-            fake_loop.create_task.assert_called_once_with(recovery_coro)
+            scheduled = [call.args[0] for call in fake_loop.create_task.call_args_list]
+            self.assertIn(recovery_coro, scheduled)
             recovery_coro.close()
 
         asyncio.run(run_start())

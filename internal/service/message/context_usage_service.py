@@ -1,11 +1,16 @@
 """
 会话上下文占用统计
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from internal.model.message import MessageModel
 from internal.service.message.context_builder import context_builder
 from pkg.model_list import DEEPSEEK_CHAT
+
+
+OFFICIAL_DEEPSEEK_CONTEXT_WINDOWS = {
+    "deepseek-chat": 1_000_000,
+}
 
 
 class ContextUsageService:
@@ -16,7 +21,15 @@ class ContextUsageService:
         self._tokenizer_checked = False
 
     def get_context_window(self) -> int:
+        official_window = OFFICIAL_DEEPSEEK_CONTEXT_WINDOWS.get(DEEPSEEK_CHAT.name)
+        if official_window:
+            return official_window
         return int(DEEPSEEK_CHAT.context_window or 64000)
+
+    def get_context_window_source(self) -> str:
+        if DEEPSEEK_CHAT.name in OFFICIAL_DEEPSEEK_CONTEXT_WINDOWS:
+            return "official"
+        return "fallback"
 
     def _load_deepseek_tokenizer(self):
         if self._tokenizer_checked:
@@ -52,6 +65,13 @@ class ContextUsageService:
     def _get_tools_snapshot(self):
         return context_builder.get_tools_snapshot()
 
+    async def _find_latest_ai_messages(self, session_id: str):
+        messages = await MessageModel.find(
+            MessageModel.session_id == session_id,
+            MessageModel.send_type == 1,
+        ).sort(-MessageModel.created_at).limit(10).to_list()
+        return messages
+
     async def _find_latest_actual_usage(self, session_id: str) -> Optional[int]:
         messages = await MessageModel.find(
             MessageModel.session_id == session_id,
@@ -59,29 +79,112 @@ class ContextUsageService:
         ).sort(-MessageModel.created_at).limit(10).to_list()
 
         for msg in messages:
-            extra_data = getattr(msg, "extra_data", None) or {}
-            usage = extra_data.get("usage") or {}
-            prompt_tokens = usage.get("prompt_tokens")
-            if isinstance(prompt_tokens, int) and prompt_tokens >= 0:
+            prompt_tokens = self._extract_prompt_tokens(getattr(msg, "extra_data", None) or {})
+            if prompt_tokens is not None:
                 return prompt_tokens
+        return None
+
+    @staticmethod
+    def _extract_prompt_tokens(extra_data: Dict[str, Any]) -> Optional[int]:
+        usage = extra_data.get("usage") or {}
+        prompt_tokens = usage.get("prompt_tokens")
+        if isinstance(prompt_tokens, int) and prompt_tokens >= 0:
+            return prompt_tokens
         return None
 
     def _with_section_tokens(self, sections):
         enriched = []
         total = 0
+        context_window = self.get_context_window()
         for section in sections:
             tokens = self.count_tokens(section.get("content", ""))
             total += tokens
             item = dict(section)
             item["tokens"] = tokens
+            item["percent"] = self._calculate_percent(tokens, context_window)
             enriched.append(item)
         return enriched, total
+
+    @staticmethod
+    def _calculate_percent(tokens: int, context_window: int) -> float:
+        if context_window <= 0:
+            return 0
+        percent = min(100, round((tokens / context_window) * 100, 2))
+        return percent
+
+    def build_usage_snapshot(
+        self,
+        agent_key: str,
+        agent_name: str,
+        sections: List[Dict[str, Any]],
+        used_tokens: Optional[int] = None,
+        source: str = "preview",
+        count_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        context_window = self.get_context_window()
+        enriched, estimated_tokens = self._with_section_tokens(sections)
+        final_used_tokens = used_tokens if isinstance(used_tokens, int) and used_tokens >= 0 else estimated_tokens
+        final_count_type = count_type or self.get_count_type()
+        percent = self._calculate_percent(final_used_tokens, context_window)
+        return {
+            "agent_key": agent_key,
+            "agent_name": agent_name,
+            "model_name": DEEPSEEK_CHAT.name,
+            "context_window": context_window,
+            "context_window_source": self.get_context_window_source(),
+            "used_tokens": final_used_tokens,
+            "remaining_tokens": context_window - final_used_tokens,
+            "percent": percent,
+            "count_type": final_count_type,
+            "source": source,
+            "sections": enriched,
+        }
+
+    def build_text_section_usage(
+        self,
+        agent_key: str,
+        agent_name: str,
+        title: str,
+        content: str,
+        section_type: str = "context",
+        used_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        return self.build_usage_snapshot(
+            agent_key=agent_key,
+            agent_name=agent_name,
+            sections=[{
+                "type": section_type,
+                "title": title,
+                "content": content or "",
+                "estimated": used_tokens is None,
+            }],
+            used_tokens=used_tokens,
+            source="preview" if used_tokens is None else "actual",
+            count_type=None if used_tokens is None else "official",
+        )
+
+    @staticmethod
+    def _get_saved_child_agent_usages(extra_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        saved = extra_data.get("agent_context_usage") or {}
+        child_usages = saved.get("child_agent_usages") or []
+        return child_usages if isinstance(child_usages, list) else []
 
     async def get_session_context_usage(self, session_id: str) -> Dict[str, Any]:
         context_window = self.get_context_window()
         preview = await context_builder.build_session_preview(session_id)
         sections, estimated_tokens = self._with_section_tokens(preview["sections"])
-        actual_prompt_tokens = await self._find_latest_actual_usage(session_id)
+        latest_ai_messages = await self._find_latest_ai_messages(session_id)
+        latest_extra_data = {}
+        actual_prompt_tokens = None
+        child_agent_usages = []
+        for message in latest_ai_messages:
+            extra_data = getattr(message, "extra_data", None) or {}
+            if actual_prompt_tokens is None:
+                actual_prompt_tokens = self._extract_prompt_tokens(extra_data)
+                if actual_prompt_tokens is not None:
+                    latest_extra_data = extra_data
+            if not child_agent_usages:
+                child_agent_usages = self._get_saved_child_agent_usages(extra_data)
 
         if actual_prompt_tokens is not None:
             used_tokens = actual_prompt_tokens
@@ -92,18 +195,32 @@ class ContextUsageService:
             count_type = self.get_count_type()
             source = "preview"
 
-        percent = 0
-        if context_window > 0:
-            percent = min(100, round((used_tokens / context_window) * 100, 2))
-
-        return {
+        percent = self._calculate_percent(used_tokens, context_window)
+        primary_agent_usage = {
+            "agent_key": "supervisor",
+            "agent_name": "主助手",
             "model_name": DEEPSEEK_CHAT.name,
             "context_window": context_window,
+            "context_window_source": self.get_context_window_source(),
             "used_tokens": used_tokens,
             "remaining_tokens": context_window - used_tokens,
             "percent": percent,
             "count_type": count_type,
             "source": source,
+            "sections": sections,
+        }
+
+        return {
+            "model_name": DEEPSEEK_CHAT.name,
+            "context_window": context_window,
+            "context_window_source": self.get_context_window_source(),
+            "used_tokens": used_tokens,
+            "remaining_tokens": context_window - used_tokens,
+            "percent": percent,
+            "count_type": count_type,
+            "source": source,
+            "primary_agent_usage": primary_agent_usage,
+            "child_agent_usages": child_agent_usages,
             "sections": sections,
             "items": sections,
         }

@@ -1,4 +1,4 @@
-"""RAG 评估管理 API。"""
+"""评估管理 API。"""
 from fastapi import APIRouter, Query, Path
 from pydantic import BaseModel
 from typing import Optional
@@ -7,7 +7,7 @@ from api.v1.response_controller import json_response
 from internal.service.evaluation import RAGEvaluationService
 from log import logger
 
-router = APIRouter(prefix="/evaluations", tags=["RAG评估"])
+router = APIRouter(prefix="/evaluations", tags=["评估管理"])
 
 
 class RAGEvaluationConfigRequest(BaseModel):
@@ -18,12 +18,38 @@ class RAGEvaluationConfigRequest(BaseModel):
     ragas_min_retrieval_score: Optional[float] = None
 
 
+@router.get("", summary="获取评估记录")
+async def get_evaluations(
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
+    keyword: str = Query(default=None, description="搜索关键词"),
+    ragas_status: str = Query(default=None, description="评估状态"),
+    evaluation_id: str = Query(default=None, description="评估ID"),
+    evaluation_type: str = Query(default=None, description="评估类型")
+):
+    try:
+        service = RAGEvaluationService()
+        data = await service.get_evaluation_management_list(
+            page=page,
+            page_size=page_size,
+            keyword=keyword,
+            ragas_status=ragas_status,
+            evaluation_id=evaluation_id,
+            evaluation_type=evaluation_type,
+        )
+        return json_response("查询成功", 0, data)
+    except Exception as e:
+        logger.error(f"获取评估记录失败: {e}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
 @router.get("/rag", summary="获取 RAG 评估记录")
 async def get_rag_evaluations(
     page: int = Query(default=1, ge=1, description="页码"),
     page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
     keyword: str = Query(default=None, description="搜索关键词"),
-    ragas_status: str = Query(default=None, description="评估状态")
+    ragas_status: str = Query(default=None, description="评估状态"),
+    evaluation_id: str = Query(default=None, description="评估ID")
 ):
     try:
         service = RAGEvaluationService()
@@ -32,6 +58,7 @@ async def get_rag_evaluations(
             page_size=page_size,
             keyword=keyword,
             ragas_status=ragas_status,
+            evaluation_id=evaluation_id,
         )
         return json_response("查询成功", 0, data)
     except Exception as e:

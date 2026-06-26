@@ -306,7 +306,22 @@ class AIReplyService:
                 event_type, content = event_queue.get_nowait()
                 
                 # 处理回调事件
-                if event_type in ["action", "observation", "final_answer", "tool_result"]:
+                if event_type == "tool_result" and isinstance(content, dict):
+                    documents = content.get("documents") or []
+                    results = content.get("results") or []
+                    if documents:
+                        yield {
+                            "event": "documents",
+                            "data": {"documents": documents}
+                        }
+                    if results:
+                        yield {
+                            "event": "rag_results",
+                            "data": {"results": results}
+                        }
+                    continue
+
+                if event_type in ["action", "observation", "final_answer"]:
                     if event_type in {"action", "observation"}:
                         process_event_key = (event_type, str(content))
                         if process_event_key == last_process_event:
@@ -347,6 +362,12 @@ class AIReplyService:
                 elif event_type == "expert_experience" and isinstance(content, dict):
                     yield {
                         "event": "expert_experience",
+                        "data": content
+                    }
+
+                elif event_type == "agent_context_usage" and isinstance(content, dict):
+                    yield {
+                        "event": "agent_context_usage",
                         "data": content
                     }
                 

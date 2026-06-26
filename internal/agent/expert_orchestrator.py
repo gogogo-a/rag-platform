@@ -37,11 +37,15 @@ class ExpertOrchestrator:
         self.task_queue = ExpertTaskQueue(
             client=None,
             topics=self._resolve_queue_topics(),
-            max_retries=EXPERT_TASK_MAX_RETRIES,
+            max_retries=min(EXPERT_TASK_MAX_RETRIES, 2),
         )
         self.result_store = expert_result_store
         self.dead_letter_tasks: List[Dict[str, Any]] = []
         self._emitted_expert_process_keys = set()
+        self.agent_context_usage = {
+            "primary_agent_usage": None,
+            "child_agent_usages": [],
+        }
 
     def _emit(self, event_type: str, content: Any) -> None:
         if self.callback:
@@ -98,21 +102,27 @@ class ExpertOrchestrator:
 
             if event_type in {"llm_chunk", "action", "observation", "final_answer"}:
                 phase = "thought" if event_type == "llm_chunk" else event_type
+                text = str(content or "").strip()
+                if not text:
+                    return
                 step_index += 1
                 raw_process.append({
                     "phase": phase,
-                    "content": str(content or "").strip(),
+                    "content": text,
                     "step_index": step_index,
                 })
+                definition = self.registry.get_definition(expert_name)
+                self._emit_expert_process_once(definition, phase, text)
 
         return expert_callback
 
     async def run_stream(self, user_message: str) -> str:
         self.original_question = user_message
         self.question_id = str(uuid.uuid4())
+        await self.registry.load()
+        self._capture_primary_context_usage(user_message)
         if self.task_queue.client is None:
             self.task_queue.client = self._resolve_queue_client()
-        await self.registry.load()
         self._emit("expert_manifest", {"experts": await self.registry.get_manifest()})
         self._emit("expert_question", {"question_id": self.question_id})
 
@@ -133,14 +143,60 @@ class ExpertOrchestrator:
             self._next_step(),
         )
 
-        for task in tasks[: self.max_steps]:
-            await self._dispatch_and_run_task(task)
+        running_tasks = [
+            asyncio.create_task(self._dispatch_and_run_task(task))
+            for task in tasks[: self.max_steps]
+        ]
+        if running_tasks:
+            await asyncio.gather(*running_tasks)
 
         results = self.result_store.get_results(self.question_id)
         self.dead_letter_tasks = self.result_store.get_dead_letters(self.question_id)
         answer = self._compose_answer(results)
         await self._save_experience(answer, results)
+        self._emit("agent_context_usage", self.agent_context_usage)
         return answer
+
+    def _capture_primary_context_usage(self, user_message: str) -> None:
+        try:
+            from internal.service.message.context_usage_service import context_usage_service
+
+            supervisor_input = self.context_builder.build_supervisor_input(user_message, self.history)
+            self.agent_context_usage["primary_agent_usage"] = context_usage_service.build_text_section_usage(
+                agent_key="supervisor",
+                agent_name="主助手",
+                title="当前上下文",
+                content=supervisor_input,
+                section_type="current_context",
+            )
+        except Exception:
+            self.agent_context_usage["primary_agent_usage"] = None
+
+    def _capture_child_context_usage(self, task: Dict[str, Any], definition) -> None:
+        try:
+            from internal.service.message.context_usage_service import context_usage_service
+
+            expert_input = self.context_builder.build_expert_input(
+                expert_name=task.get("expert_key", ""),
+                task=task.get("task", ""),
+                original_question=self.original_question,
+                history=self.history,
+            )
+            usage = context_usage_service.build_text_section_usage(
+                agent_key=definition.name,
+                agent_name=definition.display_name,
+                title="当前任务",
+                content=expert_input,
+                section_type="current_task",
+            )
+            existing_keys = {
+                item.get("agent_key")
+                for item in self.agent_context_usage["child_agent_usages"]
+            }
+            if definition.name not in existing_keys:
+                self.agent_context_usage["child_agent_usages"].append(usage)
+        except Exception:
+            return
 
     def _normalize_task(self, tool_input: Any, kwargs: Dict[str, Any]) -> str:
         if kwargs:
@@ -246,6 +302,7 @@ class ExpertOrchestrator:
     async def _dispatch_and_run_task(self, task: Dict[str, Any]) -> None:
         expert_key = task["expert_key"]
         definition = self.registry.get_definition(expert_key)
+        self._capture_child_context_usage(task, definition)
         self.task_queue.send_task(task)
         self._emit("expert_task_status", {
             "question_id": self.question_id,
@@ -398,35 +455,58 @@ class ExpertOrchestrator:
             phase = str(item.get("phase") or "").strip()
             if not phase:
                 continue
-            content = self._clean_process_display_text(phase, str(item.get("content") or ""))
-            if not content:
-                continue
-            process_key = (definition.name, phase, content)
-            if process_key in self._emitted_expert_process_keys:
-                continue
-            self._emitted_expert_process_keys.add(process_key)
-            self._emit_agent_process(
-                "expert",
-                definition.name,
-                definition.display_name,
-                phase,
-                content,
-                self._next_step(),
-            )
+            self._emit_expert_process_once(definition, phase, str(item.get("content") or ""))
 
-    @staticmethod
-    def _merge_expert_processes(raw_process: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _emit_expert_process_once(self, definition, phase: str, content: Any) -> None:
+        cleaned = self._clean_process_display_text(phase, str(content or ""))
+        if not cleaned:
+            return
+        process_key = (definition.name, phase, cleaned)
+        if process_key in self._emitted_expert_process_keys:
+            return
+        self._emitted_expert_process_keys.add(process_key)
+        self._emit_agent_process(
+            "expert",
+            definition.name,
+            definition.display_name,
+            phase,
+            cleaned,
+            self._next_step(),
+        )
+
+    @classmethod
+    def _merge_expert_processes(cls, raw_process: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         merged: List[Dict[str, Any]] = []
         for item in raw_process:
             phase = str(item.get("phase") or "").strip()
             content = str(item.get("content") or "")
             if not phase or not content.strip():
                 continue
+            if cls._is_process_marker_only(content):
+                continue
             if phase == "thought" and merged and merged[-1].get("phase") == phase:
-                merged[-1]["content"] = f"{merged[-1].get('content', '')}{content}"
+                merged[-1]["content"] = cls._join_process_text(str(merged[-1].get("content", "")), content)
                 continue
             merged.append({**item, "phase": phase, "content": content})
         return merged
+
+    @staticmethod
+    def _is_process_marker_only(text: str) -> bool:
+        return re.match(r"^\s*(thought|action|action input|observation|final answer|finalanswer|思考|操作|观测|输出|:|：)\s*$", str(text or ""), re.I) is not None
+
+    @staticmethod
+    def _join_process_text(left: str, right: str) -> str:
+        first = str(left or "").strip()
+        second = str(right or "").strip()
+        if not first:
+            return second
+        if not second:
+            return first
+        if re.match(r"^[，。！？、；：,.!?;:]", second):
+            return f"{first}{second}"
+        if re.search(r"[（(\[{《“‘]$", first):
+            return f"{first}{second}"
+        return re.sub(r"\s+", " ", f"{first} {second}").strip()
 
     def _emit_dead_letter_status(self, task: Dict[str, Any], result: Dict[str, Any]) -> None:
         expert_key = task["expert_key"]
@@ -505,9 +585,12 @@ class ExpertOrchestrator:
         cleaned = cls._clean_display_text(text)
         if not cleaned:
             return ""
+        if cleaned.strip().lower() in {"question", "question:", "开始！", "开始!"}:
+            return ""
 
         marker_pattern = r"^\s*(thought|action input|observation|final answer|finalanswer)\s*:\s*"
         cleaned = re.sub(marker_pattern, "", cleaned, count=1, flags=re.I).strip()
+        cleaned = re.sub(r"^\s*[:：]\s*", "", cleaned).strip()
         marker_labels = {
             "thought": "思考",
             "action": "操作",

@@ -7,6 +7,7 @@
           v-model="enabledFilter"
           placeholder="状态"
           clearable
+          class="agent-filter"
           style="width: 140px"
           @change="handleSearch"
         >
@@ -18,11 +19,12 @@
           placeholder="搜索 Agent"
           :prefix-icon="Search"
           clearable
+          class="agent-search"
           @clear="handleSearch"
           @keyup.enter="handleSearch"
           style="width: 240px"
         />
-        <el-button :icon="RefreshRight" @click="handleRefresh">刷新</el-button>
+        <el-button class="agent-action-button" :icon="RefreshRight" @click="handleRefresh">刷新</el-button>
         <el-button type="primary" :icon="Plus" @click="handleCreate">新增</el-button>
       </div>
     </div>
@@ -35,7 +37,13 @@
         class="agent-table"
         @row-click="handleEdit"
       >
-        <el-table-column prop="agent_name" label="名称" width="150" />
+        <el-table-column label="名称" width="170">
+          <template #default="{ row }">
+            <el-button text type="primary" :icon="Edit" size="small" @click.stop="handleEdit(row)">
+              {{ row.agent_name }}
+            </el-button>
+          </template>
+        </el-table-column>
         <el-table-column prop="agent_key" label="标识" width="150" />
         <el-table-column prop="description" label="描述" min-width="260" show-overflow-tooltip />
         <el-table-column label="MCP 工具" min-width="260" show-overflow-tooltip>
@@ -84,7 +92,12 @@
       </div>
     </div>
 
-    <el-dialog v-model="showEditDialog" :title="editForm.uuid ? '编辑 Agent' : '新增 Agent'" width="720px">
+    <el-dialog
+      v-model="showEditDialog"
+      :title="editForm.uuid ? '编辑 Agent' : '新增 Agent'"
+      width="720px"
+      class="agent-edit-dialog"
+    >
       <el-form :model="editForm" label-width="100px" class="agent-form">
         <el-form-item label="名称">
           <el-input v-model="editForm.agent_name" placeholder="请输入名称" />
@@ -133,7 +146,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Plus, RefreshRight, Search } from '@element-plus/icons-vue'
+import { Edit, Plus, RefreshRight, Search } from '@element-plus/icons-vue'
 import { createAgent, getAgentList, getAgentOptions, setAgentEnabled, updateAgent } from '@/api'
 import CustomPagination from '@/components/public/CustomPagination.vue'
 
@@ -359,5 +372,65 @@ onMounted(() => {
 
 .agent-form {
   padding-right: 12px;
+}
+
+:deep(.agent-edit-dialog .el-form-item__label) {
+  color: var(--text-secondary);
+}
+
+:deep(.agent-edit-dialog .el-input__wrapper),
+:deep(.agent-edit-dialog .el-select__wrapper),
+:deep(.agent-edit-dialog .el-input-number__decrease),
+:deep(.agent-edit-dialog .el-input-number__increase) {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: none !important;
+}
+
+:deep(.agent-edit-dialog .el-input__wrapper:hover),
+:deep(.agent-edit-dialog .el-select__wrapper:hover),
+:deep(.agent-edit-dialog .el-input__wrapper.is-focus),
+:deep(.agent-edit-dialog .el-select__wrapper.is-focused) {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(102, 126, 234, 0.55) !important;
+}
+
+:deep(.agent-edit-dialog .el-input__inner),
+:deep(.agent-edit-dialog .el-select__placeholder),
+:deep(.agent-edit-dialog .el-select__selected-item),
+:deep(.agent-edit-dialog .el-input-number .el-input__inner) {
+  color: var(--text-primary) !important;
+}
+
+:deep(.agent-edit-dialog .el-select__placeholder.is-transparent),
+:deep(.agent-edit-dialog .el-input__inner::placeholder),
+:deep(.agent-edit-dialog .el-textarea__inner::placeholder) {
+  color: rgba(226, 232, 240, 0.45) !important;
+}
+
+:deep(.agent-edit-dialog .el-textarea__inner) {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
+}
+
+:deep(.agent-edit-dialog .el-textarea__inner:hover),
+:deep(.agent-edit-dialog .el-textarea__inner:focus) {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(102, 126, 234, 0.55) !important;
+}
+
+:deep(.agent-edit-dialog .el-tag) {
+  background: rgba(102, 126, 234, 0.18) !important;
+  border-color: rgba(102, 126, 234, 0.35) !important;
+  color: var(--text-primary) !important;
+}
+
+:deep(.agent-edit-dialog .el-select__caret),
+:deep(.agent-edit-dialog .el-tag__close),
+:deep(.agent-edit-dialog .el-input-number__decrease),
+:deep(.agent-edit-dialog .el-input-number__increase) {
+  color: var(--text-secondary) !important;
 }
 </style>

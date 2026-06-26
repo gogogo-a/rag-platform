@@ -10,6 +10,13 @@
       <div class="message-header">
         <span class="message-sender">{{ isUser ? '我' : 'AI 助手' }}</span>
         <span class="message-time">{{ formatTime(message.create_at) }}</span>
+        <span
+          v-if="!isUser && executionLabel"
+          class="message-execution-time"
+          :class="{ 'is-running': message.executionRunning }"
+        >
+          {{ executionLabel }}
+        </span>
       </div>
 
       <div class="message-body">
@@ -254,15 +261,6 @@
 
       <!-- 操作按钮 -->
       <div class="message-actions">
-        <el-button
-          v-if="!isUser"
-          text
-          size="small"
-          :icon="CopyDocument"
-          @click="handleCopy"
-        >
-          复制
-        </el-button>
         <!-- 点赞按钮 -->
         <el-button
           v-if="!isUser && thoughtChainId"
@@ -295,6 +293,14 @@
           @click="handleRegenerate"
         >
           重新生成
+        </el-button>
+        <el-button
+          text
+          size="small"
+          :icon="CopyDocument"
+          @click="handleCopy"
+        >
+          复制
         </el-button>
       </div>
     </div>
@@ -550,6 +556,24 @@ const formatTime = (timestamp) => {
   return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
 }
 
+const formatExecutionSeconds = (seconds) => {
+  const value = Number(seconds || 0)
+  if (value < 10) return `${value.toFixed(1)}s`
+  return `${Math.round(value)}s`
+}
+
+const executionSeconds = computed(() => {
+  const liveValue = props.message.executionElapsedSeconds
+  if (liveValue !== undefined && liveValue !== null) return liveValue
+  return props.message.extra_data?.elapsed_seconds
+})
+
+const executionLabel = computed(() => {
+  if (executionSeconds.value === undefined || executionSeconds.value === null) return ''
+  const prefix = props.message.executionRunning ? '已执行' : '执行'
+  return `${prefix} ${formatExecutionSeconds(executionSeconds.value)}`
+})
+
 // 格式化文件大小
 const formatFileSize = (bytes) => {
   if (!bytes || bytes === 0) return '0 B'
@@ -711,6 +735,21 @@ const handleDislike = async () => {
 .message-time {
   font-size: 12px;
   color: var(--text-tertiary);
+}
+
+.message-execution-time {
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(129, 140, 248, 0.32);
+  background: var(--component-muted-bg);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.message-execution-time.is-running {
+  border-color: rgba(34, 197, 94, 0.62);
+  color: #bbf7d0;
 }
 
 .message-body {
@@ -1105,7 +1144,7 @@ const handleDislike = async () => {
 .image-info .file-name {
   flex: 1;
   font-size: 13px;
-  color: #fff;
+  color: var(--text-primary);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1361,6 +1400,7 @@ const handleDislike = async () => {
 
 .message-actions {
   display: flex;
+  justify-content: flex-end;
   gap: 6px;
   margin-top: 2px;
   opacity: 0;

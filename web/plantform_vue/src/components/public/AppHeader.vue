@@ -31,6 +31,27 @@
     </div>
 
     <div class="header-right">
+      <button
+        type="button"
+        class="theme-toggle"
+        :class="`is-${activeTheme}`"
+        :aria-label="activeTheme === 'dark' ? '切换为亮色' : '切换为暗色'"
+        @click="toggleTheme"
+      >
+        <span class="theme-toggle-track">
+          <span class="theme-toggle-thumb">
+            <el-icon>
+              <Moon v-if="activeTheme === 'dark'" />
+              <Sunny v-else />
+            </el-icon>
+          </span>
+        </span>
+        <span class="theme-toggle-icon">
+          <Sunny v-if="activeTheme === 'dark'" />
+          <Moon v-else />
+        </span>
+      </button>
+
       <div v-if="userStore.isLoggedIn" class="user-info">
         <el-dropdown trigger="click" @command="handleCommand">
           <div class="user-avatar">
@@ -128,12 +149,14 @@ import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore, useChatStore } from '@/store'
 import { updateUserInfo } from '@/api'
+import { useTheme } from '@/utils/theme'
 import { ElMessage } from 'element-plus'
-import { User, ArrowDown, SwitchButton, ChatDotRound, Setting } from '@element-plus/icons-vue'
+import { User, ArrowDown, SwitchButton, ChatDotRound, Setting, Sunny, Moon } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const userStore = useUserStore()
 const chatStore = useChatStore()
+const { activeTheme, toggleTheme } = useTheme()
 
 const profileDialogVisible = ref(false)
 const updating = ref(false)
@@ -211,7 +234,7 @@ const handleUpdateProfile = async () => {
   justify-content: space-between;
   height: 64px;
   padding: 0 24px;
-  background: rgba(21, 25, 50, 0.8);
+  background: var(--header-bg);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border-color);
   position: relative;
@@ -282,6 +305,67 @@ const handleUpdateProfile = async () => {
 /* 用户信息 */
 .header-right {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.theme-toggle {
+  width: 64px;
+  height: 34px;
+  padding: 3px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary) !important;
+  background: var(--component-muted-bg) !important;
+  border: 1px solid var(--control-border) !important;
+  box-shadow: none !important;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.theme-toggle:hover {
+  color: var(--text-primary) !important;
+  background: var(--control-hover-bg) !important;
+  border-color: var(--primary-color) !important;
+  transform: none;
+}
+
+.theme-toggle-track {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+}
+
+.theme-toggle-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary-color);
+  color: #ffffff;
+}
+
+.theme-toggle-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.theme-toggle.is-light {
+  flex-direction: row-reverse;
 }
 
 .user-info {
@@ -391,4 +475,3 @@ const handleUpdateProfile = async () => {
   background-color: rgba(64, 158, 255, 0.2) !important;
 }
 </style>
-

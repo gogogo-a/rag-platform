@@ -121,7 +121,7 @@ class ExpertAgentFrameworkTest(unittest.TestCase):
 
         self.assertEqual([], manifest)
 
-    def test_expert_orchestrator_wraps_child_agent_events(self):
+    def test_expert_orchestrator_streams_child_agent_events_immediately(self):
         import asyncio
 
         from internal.agent.expert_orchestrator import ExpertOrchestrator
@@ -135,12 +135,20 @@ class ExpertAgentFrameworkTest(unittest.TestCase):
 
         raw_process = []
         child_callback = orchestrator._build_expert_callback("search", "搜索专家", [], [], raw_process)
+        child_callback("llm_chunk", "需要先查询天气")
         child_callback("action", "web_search(北京天气)")
         child_callback("observation", "晴")
 
-        self.assertEqual([], events)
+        expert_processes = [
+            content for event_type, content in events
+            if event_type == "agent_process" and content["scope"] == "expert"
+        ]
         self.assertEqual(
-            ["web_search(北京天气)", "晴"],
+            ["需要先查询天气", "web_search(北京天气)", "晴"],
+            [item["content"] for item in expert_processes],
+        )
+        self.assertEqual(
+            ["需要先查询天气", "web_search(北京天气)", "晴"],
             [item["content"] for item in raw_process],
         )
 
@@ -314,7 +322,7 @@ class ExpertAgentFrameworkTest(unittest.TestCase):
         ]
         self.assertEqual(
             [
-                "查询天气\n思考：判断用户需要实时天气",
+                "查询天气 思考：判断用户需要实时天气",
                 "weather_query({})",
                 '{"city":"北京"}',
                 '{"success": true, "summary": "北京晴，29°C。"}',
@@ -419,7 +427,7 @@ class ExpertAgentFrameworkTest(unittest.TestCase):
             [item["content"] for item in expert_processes],
         )
 
-    def test_run_stream_emits_supervisor_thought_with_called_agent_name(self):
+    def test_run_stream_dispatches_selected_experts_concurrently(self):
         import asyncio
         from unittest.mock import AsyncMock, patch
 
@@ -428,23 +436,45 @@ class ExpertAgentFrameworkTest(unittest.TestCase):
         events = []
         orchestrator = ExpertOrchestrator(
             llm_service=object(),
-            tool_map={"weather_query": object()},
+            tool_map={"web_search": object(), "weather_query": object()},
             callback=lambda event_type, content: events.append((event_type, content)),
         )
+        started = []
+
+        async def delayed_dispatch(task):
+            started.append(task["expert_key"])
+            if task["expert_key"] == "search":
+                await asyncio.sleep(0.05)
+            orchestrator.result_store.add_result({
+                "question_id": task["question_id"],
+                "task_id": task["task_id"],
+                "expert_key": task["expert_key"],
+                "answer": f"{task['expert_key']} result",
+                "success": True,
+                "process_summary": "",
+                "raw_process": [],
+                "documents": [],
+                "rag_results": [],
+                "retry_count": task.get("retry_count", 0),
+            })
 
         with patch("internal.service.orm.agent_config_service.agent_config_service", FakeAgentConfigService([
+                fake_agent_config("search", "搜索专家", "查询网页、实时信息和公开资料。", ["web_search"], "search", 20),
                 fake_agent_config("location", "位置专家", "处理天气、地理编码、地点搜索、路线规划和 IP 定位。", ["weather_query"], "location", 30),
              ])), \
-             patch.object(orchestrator, "_dispatch_and_run_task", AsyncMock()), \
+             patch.object(orchestrator, "_dispatch_and_run_task", AsyncMock(side_effect=delayed_dispatch)), \
              patch.object(orchestrator, "_save_experience", AsyncMock()):
-            asyncio.run(orchestrator.run_stream("北京明天天气"))
+            answer = asyncio.run(orchestrator.run_stream("搜索北京明天天气"))
 
         supervisor_processes = [
             content for event_type, content in events
             if event_type == "agent_process" and content["scope"] == "supervisor"
         ]
         self.assertEqual("thought", supervisor_processes[0]["phase"])
-        self.assertEqual("识别到需要调用：位置专家", supervisor_processes[0]["content"])
+        self.assertEqual("识别到需要调用：搜索专家、位置专家", supervisor_processes[0]["content"])
+        self.assertEqual(["search", "location"], started)
+        self.assertIn("搜索专家：search result", answer)
+        self.assertIn("位置专家：location result", answer)
 
     def test_process_markers_inside_expert_text_are_localized_without_changing_content(self):
         from internal.agent.expert_orchestrator import ExpertOrchestrator
@@ -456,6 +486,15 @@ class ExpertAgentFrameworkTest(unittest.TestCase):
                 "我已完成查询。FinalAnswer:北京明天晴，适合去故宫。",
             ),
         )
+
+    def test_prompt_control_fragments_are_hidden_from_expert_process(self):
+        from internal.agent.expert_orchestrator import ExpertOrchestrator
+
+        for fragment in ["Question", "Question:", "开始！"]:
+            self.assertEqual(
+                "",
+                ExpertOrchestrator._clean_process_display_text("thought", fragment),
+            )
 
     def test_orchestrator_dispatches_tasks_without_running_child_agent_locally(self):
         import asyncio
@@ -534,7 +573,7 @@ class ExpertAgentFrameworkTest(unittest.TestCase):
         self.assertEqual("北京天气晴。", sent[0][1]["answer"])
         self.assertTrue(sent[0][1]["success"])
 
-    def test_orchestrator_retries_unusable_expert_result_then_dead_letters(self):
+    def test_orchestrator_dead_letters_unusable_expert_result_after_one_retry(self):
         import asyncio
         from unittest.mock import patch
 
@@ -554,6 +593,7 @@ class ExpertAgentFrameworkTest(unittest.TestCase):
             callback=lambda event_type, content: events.append((event_type, content)),
         )
         orchestrator.task_queue.client = FakeClient()
+        orchestrator.task_queue.max_retries = 2
         orchestrator.question_id = "question-1"
         task = orchestrator.task_queue.build_task(
             question_id="question-1",
@@ -563,7 +603,7 @@ class ExpertAgentFrameworkTest(unittest.TestCase):
         )
 
         async def patched_wait(dispatched_task):
-            if int(dispatched_task.get("retry_count") or 0) < 4:
+            if int(dispatched_task.get("retry_count") or 0) < 1:
                 orchestrator.result_store.add_result({
                     "question_id": dispatched_task["question_id"],
                     "task_id": dispatched_task["task_id"],
@@ -594,10 +634,10 @@ class ExpertAgentFrameworkTest(unittest.TestCase):
             for event_type, content in events
             if event_type == "expert_task_status"
         ]
-        self.assertEqual(5, statuses.count("created"))
+        self.assertEqual(2, statuses.count("created"))
         self.assertIn("dead_letter", statuses)
         self.assertEqual(1, len(orchestrator.dead_letter_tasks))
-        self.assertEqual(5, len([item for item in sent if item[0] == "expert_tasks"]))
+        self.assertEqual(2, len([item for item in sent if item[0] == "expert_tasks"]))
         call_processes = [
             content for event_type, content in events
             if event_type == "agent_process" and content["phase"] == "call"
@@ -703,6 +743,29 @@ class ExpertAgentFrameworkTest(unittest.TestCase):
                 "event": "expert_experience",
                 "data": {"experience_chain_id": "experience-1"},
             }
+            yield {
+                "event": "agent_context_usage",
+                "data": {
+                    "primary_agent_usage": {
+                        "agent_key": "supervisor",
+                        "agent_name": "主助手",
+                        "used_tokens": 30,
+                        "context_window": 1000,
+                        "percent": 3,
+                        "sections": [],
+                    },
+                    "child_agent_usages": [
+                        {
+                            "agent_key": "search",
+                            "agent_name": "搜索专家",
+                            "used_tokens": 12,
+                            "context_window": 1000,
+                            "percent": 1.2,
+                            "sections": [],
+                        }
+                    ],
+                },
+            }
             yield {"event": "answer_chunk", "data": {"content": "北京天气晴。"}}
 
         async def fake_save_ai_message(*args, **kwargs):
@@ -746,6 +809,12 @@ class ExpertAgentFrameworkTest(unittest.TestCase):
         self.assertEqual("task-1", saved_extra_data["expert_tasks"][0]["task_id"])
         self.assertEqual("北京天气晴。", saved_extra_data["expert_results"][0]["answer"])
         self.assertEqual("experience-1", saved_extra_data["experience_chain_id"])
+        self.assertEqual("主助手", saved_extra_data["agent_context_usage"]["primary_agent_usage"]["agent_name"])
+        self.assertEqual("search", saved_extra_data["agent_context_usage"]["child_agent_usages"][0]["agent_key"])
+        self.assertIn("elapsed_seconds", saved_extra_data)
+        done_events = [event for event in events if event["event"] == "done"]
+        self.assertEqual(1, len(done_events))
+        self.assertIn("elapsed_seconds", done_events[0]["data"])
 
     async def _collect_stream(self, service):
         events = []

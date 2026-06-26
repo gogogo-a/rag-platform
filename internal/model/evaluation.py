@@ -3,7 +3,7 @@ RAG 评估与评分模型
 用于量化系统生成的回答质量
 """
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 from beanie import Document
 from pydantic import Field
 
@@ -42,6 +42,11 @@ class EvaluationModel(Document):
     context_recall: float = Field(default=0.0, description="上下文召回率：是否找齐了关键信息")
     
     # 综合评价
+    evaluation_type: str = Field(default="rag", description="评估类型 (rag/normal_reply/long_context/tool_call/multi_agent)")
+    llm_score: float = Field(default=0.0, description="LLM 质量评分，0-1")
+    rule_score: float = Field(default=0.0, description="规则评分，0-1")
+    score_reason: Optional[str] = Field(None, description="LLM 评分原因")
+    score_breakdown: Dict[str, Any] = Field(default_factory=dict, description="评分构成")
     overall_score: float = Field(default=0.0, description="综合得分")
     evaluator: str = Field(default="llm", description="评估者类型 (llm/human/ragas)")
     comment: Optional[str] = Field(None, description="详细评语/改进建议")
@@ -56,6 +61,7 @@ class EvaluationModel(Document):
         indexes = [
             "target_id",
             "target_type",
+            "evaluation_type",
             "dataset_type",
             "overall_score",
             "ragas_status",

@@ -1,7 +1,7 @@
 <template>
   <div class="rag-evaluation-management">
     <div class="page-header">
-      <h2 class="page-title">RAG 评估</h2>
+      <h2 class="page-title">评估管理</h2>
       <div class="header-actions">
         <el-select
           v-model="statusFilter"
@@ -30,6 +30,19 @@
       </div>
     </div>
 
+    <div class="type-tabs">
+      <button
+        v-for="item in evaluationTypes"
+        :key="item.value"
+        class="type-tab"
+        :class="{ active: activeType === item.value }"
+        @click="changeType(item.value)"
+      >
+        <span>{{ item.label }}</span>
+        <strong>{{ summary.type_counts?.[item.value] || 0 }}</strong>
+      </button>
+    </div>
+
     <div class="summary-grid">
       <div class="summary-item">
         <span class="summary-label">总记录</span>
@@ -56,8 +69,8 @@
         <strong>{{ summary.skipped_count }}</strong>
       </div>
       <div class="summary-item">
-        <span class="summary-label">平均检索分</span>
-        <strong>{{ formatScore(summary.avg_retrieval_score) }}</strong>
+        <span class="summary-label">平均综合分</span>
+        <strong>{{ formatScore(summary.avg_overall_score) }}</strong>
       </div>
       <div class="summary-item">
         <span class="summary-label">平均 RAGAS 分</span>
@@ -67,7 +80,7 @@
 
     <div class="config-panel">
       <el-switch v-model="configForm.ragas_enabled" active-text="启用 RAGAS" />
-      <el-switch v-model="configForm.ragas_queue_enabled" active-text="加入 Kafka 队列" />
+      <el-switch v-model="configForm.ragas_queue_enabled" active-text="加入队列" />
       <el-input-number v-model="configForm.ragas_sample_rate" :min="0" :max="1" :step="0.1" controls-position="right" />
       <el-input-number v-model="configForm.ragas_max_chunks_per_question" :min="0" :max="20" controls-position="right" />
       <el-input-number v-model="configForm.ragas_min_retrieval_score" :min="0" :max="1" :step="0.05" controls-position="right" />
@@ -83,13 +96,18 @@
         @row-click="handleRowClick"
       >
         <el-table-column prop="question" label="问题" min-width="220" show-overflow-tooltip />
-        <el-table-column prop="retrieved_text" label="返回文本" min-width="300" show-overflow-tooltip />
-        <el-table-column prop="filename" label="文档来源" min-width="180" show-overflow-tooltip />
-        <el-table-column label="检索分数" width="110">
+        <el-table-column label="评估类型" width="130">
+          <template #default="{ row }">{{ evaluationTypeText(row.evaluation_type) }}</template>
+        </el-table-column>
+        <el-table-column label="综合评分" width="110">
           <template #default="{ row }">{{ formatScore(row.overall_score) }}</template>
         </el-table-column>
-        <el-table-column label="RAGAS" width="110">
-          <template #default="{ row }">{{ formatRagasScore(row) }}</template>
+        <el-table-column prop="score_reason" label="评分原因" min-width="280" show-overflow-tooltip />
+        <el-table-column label="LLM 评分" width="110">
+          <template #default="{ row }">{{ formatScore(row.llm_score) }}</template>
+        </el-table-column>
+        <el-table-column label="规则评分" width="110">
+          <template #default="{ row }">{{ formatScore(row.rule_score) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
@@ -101,15 +119,15 @@
         <el-table-column prop="created_at" label="时间" width="180">
           <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column prop="queued_at" label="入队时间" width="180">
-          <template #default="{ row }">{{ formatDate(row.queued_at) }}</template>
-        </el-table-column>
-        <el-table-column prop="completed_at" label="完成时间" width="180">
-          <template #default="{ row }">{{ formatDate(row.completed_at) }}</template>
-        </el-table-column>
         <el-table-column label="操作" width="120" fixed="right">
           <template #default="{ row }">
-            <el-button text type="primary" size="small" @click.stop="handleRequeue(row)">
+            <el-button
+              v-if="row.evaluation_type === 'rag'"
+              text
+              type="primary"
+              size="small"
+              @click.stop="handleRequeue(row)"
+            >
               重新评估
             </el-button>
           </template>
@@ -128,7 +146,7 @@
       </div>
     </div>
 
-    <el-dialog v-model="showDetailDialog" title="RAG 评估详情" width="760px">
+    <el-dialog v-model="showDetailDialog" title="评估详情" width="760px">
       <div v-if="detailData" class="detail-content">
         <div class="detail-section">
           <h4>问题</h4>
@@ -139,19 +157,31 @@
           <p>{{ detailData.answer || '暂无回答' }}</p>
         </div>
         <div class="detail-section">
-          <h4>返回文本</h4>
-          <p>{{ detailData.retrieved_text }}</p>
+          <h4>评分原因</h4>
+          <p>{{ detailData.score_reason || '暂无评分原因' }}</p>
         </div>
         <div class="score-list">
-          <span>检索分数：{{ formatScore(detailData.overall_score) }}</span>
-          <span>向量分数：{{ formatScore(detailData.vector_score) }}</span>
-          <span>重排分数：{{ formatScore(detailData.rerank_score) }}</span>
-          <span>忠实度：{{ formatScore(detailData.faithfulness) }}</span>
-          <span>回答相关度：{{ formatScore(detailData.answer_relevance) }}</span>
-          <span>上下文精准度：{{ formatScore(detailData.context_precision) }}</span>
+          <span>综合评分：{{ formatScore(detailData.overall_score) }}</span>
+          <span>LLM 评分：{{ formatScore(detailData.llm_score) }}</span>
+          <span>规则评分：{{ formatScore(detailData.rule_score) }}</span>
+          <span>评估类型：{{ evaluationTypeText(detailData.evaluation_type) }}</span>
         </div>
+        <template v-if="detailData.evaluation_type === 'rag'">
+          <div class="detail-section">
+            <h4>返回文本</h4>
+            <p>{{ detailData.retrieved_text || '暂无返回文本' }}</p>
+          </div>
+          <div class="score-list">
+            <span>向量分数：{{ formatScore(detailData.vector_score) }}</span>
+            <span>重排分数：{{ formatScore(detailData.rerank_score) }}</span>
+            <span>忠实度：{{ formatScore(detailData.faithfulness) }}</span>
+            <span>回答相关度：{{ formatScore(detailData.answer_relevance) }}</span>
+            <span>上下文精准度：{{ formatScore(detailData.context_precision) }}</span>
+            <span>RAGAS：{{ formatRagasScore(detailData) }}</span>
+          </div>
+        </template>
         <div class="detail-meta">
-          <span>{{ detailData.filename || '未知文档' }}</span>
+          <span>{{ detailData.filename || evaluationTypeText(detailData.evaluation_type) }}</span>
           <span>{{ formatDate(detailData.created_at) }}</span>
         </div>
       </div>
@@ -163,21 +193,31 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { RefreshRight, Search } from '@element-plus/icons-vue'
-import { getRAGEvaluationConfig, getRAGEvaluationList, requeueRAGEvaluation, updateRAGEvaluationConfig } from '@/api'
+import { getEvaluationList, getRAGEvaluationConfig, requeueRAGEvaluation, updateRAGEvaluationConfig } from '@/api'
 import CustomPagination from '@/components/public/CustomPagination.vue'
+import { useRoute } from 'vue-router'
 
 const loading = ref(false)
+const route = useRoute()
 const records = ref([])
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const searchKeyword = ref('')
 const statusFilter = ref('')
+const activeType = ref('rag')
 const showDetailDialog = ref(false)
 const detailData = ref(null)
+const evaluationTypes = [
+  { label: 'RAG 评估', value: 'rag' },
+  { label: '正常回复评估', value: 'normal_reply' },
+  { label: '长上下文评估', value: 'long_context' },
+  { label: '工具调用评估', value: 'tool_call' },
+  { label: '多 Agent 评估', value: 'multi_agent' }
+]
 const summary = ref({
   total: 0,
   completed_count: 0,
@@ -186,8 +226,10 @@ const summary = ref({
   running_count: 0,
   failed_count: 0,
   skipped_count: 0,
+  avg_overall_score: 0,
   avg_retrieval_score: 0,
-  avg_ragas_score: 0
+  avg_ragas_score: 0,
+  type_counts: {}
 })
 const configForm = ref({
   ragas_enabled: true,
@@ -200,11 +242,13 @@ const configForm = ref({
 const fetchRecords = async () => {
   loading.value = true
   try {
-    const data = await getRAGEvaluationList({
+    const data = await getEvaluationList({
       page: currentPage.value,
       page_size: pageSize.value,
       keyword: searchKeyword.value || undefined,
-      ragas_status: statusFilter.value || undefined
+      ragas_status: statusFilter.value || undefined,
+      evaluation_id: route.query.evaluation_id || undefined,
+      evaluation_type: activeType.value
     })
     records.value = data.items || []
     total.value = data.total || 0
@@ -216,11 +260,13 @@ const fetchRecords = async () => {
       running_count: data.running_count || 0,
       failed_count: data.failed_count || 0,
       skipped_count: data.skipped_count || 0,
+      avg_overall_score: data.avg_overall_score || 0,
       avg_retrieval_score: data.avg_retrieval_score || 0,
-      avg_ragas_score: data.avg_ragas_score || 0
+      avg_ragas_score: data.avg_ragas_score || 0,
+      type_counts: data.type_counts || {}
     }
   } catch (error) {
-    ElMessage.error('获取 RAG 评估记录失败')
+    ElMessage.error('获取评估记录失败')
   } finally {
     loading.value = false
   }
@@ -260,6 +306,12 @@ const handleRequeue = async (row) => {
   }
 }
 
+const changeType = (type) => {
+  activeType.value = type
+  currentPage.value = 1
+  fetchRecords()
+}
+
 const handleSearch = () => {
   currentPage.value = 1
   fetchRecords()
@@ -291,6 +343,11 @@ const formatRagasScore = (row) => {
   if ((row.queue_status || row.ragas_status) !== 'completed') return '-'
   const score = ((row.faithfulness || 0) + (row.answer_relevance || 0) + (row.context_precision || 0)) / 3
   return formatScore(score)
+}
+
+const evaluationTypeText = (type) => {
+  const item = evaluationTypes.find((option) => option.value === type)
+  return item ? item.label : '评估'
 }
 
 const statusText = (status) => {
@@ -332,6 +389,14 @@ onMounted(() => {
   fetchConfig()
   fetchRecords()
 })
+
+watch(
+  () => route.query.evaluation_id,
+  () => {
+    currentPage.value = 1
+    fetchRecords()
+  }
+)
 </script>
 
 <style scoped>
@@ -360,6 +425,38 @@ onMounted(() => {
 .header-actions {
   display: flex;
   gap: 12px;
+}
+
+.type-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.type-tab {
+  min-height: 58px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+.type-tab.active {
+  border-color: var(--primary-color);
+  color: var(--text-primary);
+  box-shadow: inset 3px 0 0 var(--primary-color);
+}
+
+.type-tab strong {
+  color: var(--text-primary);
+  font-size: 18px;
 }
 
 .summary-grid {

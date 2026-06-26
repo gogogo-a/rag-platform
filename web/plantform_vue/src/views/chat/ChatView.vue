@@ -35,23 +35,23 @@
         size="560px"
         class="context-usage-drawer"
       >
-        <div v-if="contextUsage" class="context-panel">
+        <div v-if="primaryContextUsage" class="context-panel">
           <div class="context-summary">
             <div class="context-summary-item">
               <span class="summary-label">模型</span>
-              <span class="summary-value">{{ contextUsage.model_name }}</span>
+              <span class="summary-value">{{ primaryContextUsage.model_name }}</span>
             </div>
             <div class="context-summary-item">
               <span class="summary-label">已用</span>
-              <span class="summary-value">{{ formatToken(contextUsage.used_tokens) }}</span>
+              <span class="summary-value">{{ formatToken(primaryContextUsage.used_tokens) }}</span>
             </div>
             <div class="context-summary-item">
-              <span class="summary-label">总上下文</span>
-              <span class="summary-value">{{ formatToken(contextUsage.context_window) }}</span>
+              <span class="summary-label">上下文</span>
+              <span class="summary-value">{{ formatToken(primaryContextUsage.context_window) }}</span>
             </div>
             <div class="context-summary-item">
               <span class="summary-label">剩余</span>
-              <span class="summary-value">{{ formatToken(contextUsage.remaining_tokens) }}</span>
+              <span class="summary-value">{{ formatToken(primaryContextUsage.remaining_tokens) }}</span>
             </div>
           </div>
 
@@ -75,10 +75,43 @@
                 <template #title>
                   <div class="context-section-title">
                     <span>{{ section.title }}</span>
-                    <span>{{ formatToken(section.tokens) }} · {{ sectionPercent(section.tokens) }}</span>
+                    <span>{{ formatToken(section.tokens) }} · {{ sectionPercent(section.tokens, primaryContextUsage.context_window) }}</span>
                   </div>
                 </template>
                 <pre class="context-section-content">{{ section.content }}</pre>
+              </el-collapse-item>
+            </el-collapse>
+          </div>
+
+          <div v-if="childAgentUsages.length" class="context-child-agents">
+            <div class="context-child-title">子专家上下文</div>
+            <el-collapse>
+              <el-collapse-item
+                v-for="agent in childAgentUsages"
+                :key="agent.agent_key"
+                :name="`child-${agent.agent_key}`"
+              >
+                <template #title>
+                  <div class="context-section-title">
+                    <span>调用：{{ agent.agent_name }}</span>
+                    <span>{{ formatToken(agent.used_tokens) }} · {{ usagePercent(agent.percent) }}</span>
+                  </div>
+                </template>
+                <div class="context-agent-summary">
+                  <span>已用 {{ formatToken(agent.used_tokens) }}</span>
+                  <span>剩余 {{ formatToken(agent.remaining_tokens) }}</span>
+                </div>
+                <div
+                  v-for="section in agent.sections || []"
+                  :key="`${agent.agent_key}-${section.type}`"
+                  class="context-child-section"
+                >
+                  <div class="context-section-title">
+                    <span>{{ section.title }}</span>
+                    <span>{{ formatToken(section.tokens) }} · {{ sectionPercent(section.tokens, agent.context_window) }}</span>
+                  </div>
+                  <pre class="context-section-content">{{ section.content }}</pre>
+                </div>
               </el-collapse-item>
             </el-collapse>
           </div>
@@ -130,7 +163,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, onActivated, onDeactivated, watch, defineOptions } from 'vue'
+import { ref, computed, nextTick, onMounted, onActivated, onDeactivated, onBeforeUnmount, watch, defineOptions } from 'vue'
 import { useUserStore, useChatStore } from '@/store'
 import { sendMessageStreamWithOptions, getContextUsage } from '@/api'
 import { applyAgentManifest, applyAgentProcess } from '@/utils/agentProcess'
@@ -158,6 +191,9 @@ const savedScrollPosition = ref(0) // 保存滚动位置
 const contextDialogVisible = ref(false)
 const contextLoading = ref(false)
 const contextUsage = ref(null)
+const executionStartedAt = ref(0)
+const executionElapsedSeconds = ref(0)
+const executionTimerId = ref(null)
 
 const userScrollAttempts = ref(0) // 用户尝试滚动的次数
 const allowFreeScroll = ref(false) // 是否允许自由滚动
@@ -165,6 +201,46 @@ const preserveScrollAfterPrepend = ref(null)
 const shouldScrollAfterSessionLoad = ref(false)
 
 const canViewContextUsage = computed(() => userStore.userInfo?.is_admin === 1)
+
+const formatExecutionSeconds = (seconds) => {
+  const value = Number(seconds || 0)
+  if (value < 10) return `${value.toFixed(1)}s`
+  return `${Math.round(value)}s`
+}
+
+const stopExecutionTimer = () => {
+  if (executionTimerId.value) {
+    window.clearInterval(executionTimerId.value)
+    executionTimerId.value = null
+  }
+}
+
+const startExecutionTimer = () => {
+  stopExecutionTimer()
+  executionStartedAt.value = Date.now()
+  executionElapsedSeconds.value = 0
+  executionTimerId.value = window.setInterval(() => {
+    executionElapsedSeconds.value = (Date.now() - executionStartedAt.value) / 1000
+    const lastMessage = chatStore.currentMessages[chatStore.currentMessages.length - 1]
+    if (lastMessage && lastMessage.role === 'assistant') {
+      lastMessage.executionElapsedSeconds = executionElapsedSeconds.value
+      lastMessage.executionRunning = true
+    }
+  }, 100)
+}
+
+const finishExecutionTimer = (elapsedSeconds = null) => {
+  const finalSeconds = elapsedSeconds !== null && elapsedSeconds !== undefined
+    ? Number(elapsedSeconds)
+    : (Date.now() - executionStartedAt.value) / 1000
+  executionElapsedSeconds.value = finalSeconds
+  const lastMessage = chatStore.currentMessages[chatStore.currentMessages.length - 1]
+  if (lastMessage && lastMessage.role === 'assistant') {
+    lastMessage.executionElapsedSeconds = finalSeconds
+    lastMessage.executionRunning = false
+  }
+  stopExecutionTimer()
+}
 
 const contextUsageLabel = computed(() => {
   if (!contextUsage.value) return '0%'
@@ -176,27 +252,34 @@ const contextUsageLabel = computed(() => {
 })
 
 const contextUsageLevel = computed(() => {
-  const percent = contextUsage.value?.percent || 0
+  const percent = primaryContextUsage.value?.percent || 0
   if (percent >= 85) return 'is-high'
   if (percent >= 60) return 'is-medium'
   return 'is-low'
 })
 
-const contextUsageSections = computed(() => contextUsage.value?.sections || contextUsage.value?.items || [])
+const primaryContextUsage = computed(() => {
+  if (!contextUsage.value) return null
+  return contextUsage.value.primary_agent_usage || contextUsage.value
+})
+
+const childAgentUsages = computed(() => contextUsage.value?.child_agent_usages || [])
+
+const contextUsageSections = computed(() => primaryContextUsage.value?.sections || primaryContextUsage.value?.items || [])
 
 const contextUsageTitle = computed(() => {
-  if (!contextUsage.value) return '上下文占用'
-  return `${formatToken(contextUsage.value.used_tokens)} / ${formatToken(contextUsage.value.context_window)}`
+  if (!primaryContextUsage.value) return '上下文占用'
+  return `${formatToken(primaryContextUsage.value.used_tokens)} / ${formatToken(primaryContextUsage.value.context_window)}`
 })
 
 const contextSourceLabel = computed(() => {
-  if (!contextUsage.value) return ''
-  if (contextUsage.value.source === 'actual') return '实际用量'
-  return contextUsage.value.count_type === 'estimated' ? '预估用量' : 'Tokenizer 统计'
+  if (!primaryContextUsage.value) return ''
+  if (primaryContextUsage.value.source === 'actual') return '实际用量'
+  return primaryContextUsage.value.count_type === 'estimated' ? '预估用量' : 'Token 统计'
 })
 
 const contextMeterWidth = computed(() => {
-  const percent = Math.min(100, Math.max(0, Number(contextUsage.value?.percent || 0)))
+  const percent = Math.min(100, Math.max(0, Number(primaryContextUsage.value?.percent || 0)))
   return `${percent}%`
 })
 
@@ -205,13 +288,19 @@ const formatToken = (value) => {
   return `${number.toLocaleString()} tokens`
 }
 
-const sectionPercent = (tokens) => {
-  const total = Number(contextUsage.value?.used_tokens || 0)
+const sectionPercent = (tokens, contextWindow) => {
+  const total = Number(contextWindow || 0)
   const value = Number(tokens || 0)
   if (!total || !value) return '0%'
-  const percent = (value / total) * 100
+  const percent = Math.min(100, (value / total) * 100)
   if (percent > 0 && percent < 1) return '<1%'
   return `${percent.toFixed(1)}%`
+}
+
+const usagePercent = (percent) => {
+  const value = Number(percent || 0)
+  if (value > 0 && value < 1) return '<1%'
+  return `${value % 1 === 0 ? Math.round(value) : value.toFixed(2)}%`
 }
 
 // 判断是否为最后一条消息
@@ -332,6 +421,7 @@ const handleSendMessage = async ({ content, showThinking, agentMode = chatStore.
   }
   
   chatStore.addMessage(userMessage)
+  startExecutionTimer()
   
   // 🔥 用户发送问题时，重置滚动状态并强制滚动到底部
   resetScrollState()
@@ -347,6 +437,8 @@ const handleSendMessage = async ({ content, showThinking, agentMode = chatStore.
     agentManifest: [],
     agentProcesses: [],
     documents: [],
+    executionElapsedSeconds: 0,
+    executionRunning: true,
     create_at: new Date().toISOString()
   }
   chatStore.addMessage(aiMessage)
@@ -419,6 +511,7 @@ const handleSendMessage = async ({ content, showThinking, agentMode = chatStore.
     
     // 移除失败的消息
     chatStore.currentMessages.pop()
+    finishExecutionTimer()
   } finally {
     isStreaming.value = false
   }
@@ -496,6 +589,15 @@ const handleSSEEvent = async (eventType, data) => {
 
     case 'expert_task_status':
       break
+
+    case 'agent_context_usage':
+      if (lastMessage) {
+        lastMessage.extra_data = {
+          ...(lastMessage.extra_data || {}),
+          agent_context_usage: data
+        }
+      }
+      break
       
     case 'answer_chunk':
       // 答案片段
@@ -531,6 +633,13 @@ const handleSSEEvent = async (eventType, data) => {
       
     case 'done':
       // 流式输出完成
+      finishExecutionTimer(data.elapsed_seconds)
+      if (lastMessage) {
+        lastMessage.extra_data = {
+          ...(lastMessage.extra_data || {}),
+          elapsed_seconds: data.elapsed_seconds || lastMessage.executionElapsedSeconds
+        }
+      }
       isStreaming.value = false
       
       // 🔥 重置滚动状态
@@ -554,6 +663,7 @@ const handleSSEEvent = async (eventType, data) => {
     case 'error':
       // 错误
       ElMessage.error(data.message || '发生错误')
+      finishExecutionTimer()
       isStreaming.value = false
       // 🔥 错误时也重置滚动状态
       resetScrollState()
@@ -650,6 +760,10 @@ onDeactivated(() => {
   }
 })
 
+onBeforeUnmount(() => {
+  stopExecutionTimer()
+})
+
 // 监听 userId 变化，当登录后 userId 从空变为有值时，自动获取会话列表
 watch(
   () => userStore.userId,
@@ -697,7 +811,7 @@ watch(
   justify-content: space-between;
   min-height: 44px;
   padding: 8px 20px;
-  background: rgba(21, 25, 50, 0.92);
+  background: var(--component-bg);
   border-bottom: 1px solid var(--border-color);
 }
 
@@ -725,34 +839,38 @@ watch(
 }
 
 .context-usage-button {
-  min-width: 42px;
+  min-width: 64px;
   height: 28px;
-  border-radius: 50%;
-  border: 1px solid rgba(148, 163, 184, 0.28);
-  background: rgba(15, 23, 42, 0.72);
+  border-radius: 999px;
+  border: 1px solid var(--control-border);
+  background: var(--component-muted-bg);
   color: var(--text-primary);
-  font-size: 10px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
-  padding: 0 8px;
-  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+  padding: 0 12px;
+  box-shadow: none;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
 }
 
 .context-usage-button:hover {
-  transform: translateY(-1px);
-  background: rgba(30, 41, 59, 0.9);
+  background: var(--control-hover-bg);
+  border-color: var(--primary-color);
 }
 
 .context-usage-button.is-low {
-  border-color: rgba(34, 197, 94, 0.65);
+  border-color: rgba(34, 197, 94, 0.45);
+  color: var(--text-secondary);
 }
 
 .context-usage-button.is-medium {
-  border-color: rgba(245, 158, 11, 0.72);
+  border-color: rgba(245, 158, 11, 0.58);
+  color: var(--warning-color);
 }
 
 .context-usage-button.is-high {
-  border-color: rgba(239, 68, 68, 0.78);
+  border-color: rgba(239, 68, 68, 0.62);
+  color: var(--danger-color);
 }
 
 :deep(.context-usage-drawer) {
@@ -875,6 +993,35 @@ watch(
   min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
+}
+
+.context-child-agents {
+  flex-shrink: 0;
+  max-height: 34vh;
+  overflow-y: auto;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color);
+}
+
+.context-child-title {
+  margin-bottom: 10px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.context-agent-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.context-child-section + .context-child-section {
+  margin-top: 12px;
 }
 
 .context-section-title {

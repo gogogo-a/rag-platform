@@ -217,7 +217,8 @@ class MessageService:
                 "experience_chain_id": None,
                 "documents": [],
                 "rag_results": [],
-                "usage": {}
+                "usage": {},
+                "agent_context_usage": None
             }
             
             # 性能监控
@@ -323,6 +324,10 @@ class MessageService:
 
                 elif event_type == "expert_experience":
                     extra_data["experience_chain_id"] = event_data.get("experience_chain_id")
+
+                elif event_type == "agent_context_usage":
+                    if isinstance(event_data, dict):
+                        extra_data["agent_context_usage"] = event_data
                         
                 elif event_type == "answer_chunk":
                     if answer_start is None:
@@ -376,12 +381,25 @@ class MessageService:
                     "actions": extra_data["actions"],
                     "observations": extra_data["observations"]
                 }
+                final_extra_data["elapsed_seconds"] = round(llm_total_duration, 3)
+                final_extra_data["elapsed_ms"] = round(llm_total_duration * 1000, 2)
                 if extra_data["agent_manifest"]:
                     final_extra_data["agent_manifest"] = extra_data["agent_manifest"]
                 if extra_data["agent_processes"]:
                     final_extra_data["agent_processes"] = extra_data["agent_processes"]
                 if extra_data["usage"]:
                     final_extra_data["usage"] = extra_data["usage"]
+                    if isinstance(extra_data["agent_context_usage"], dict):
+                        primary_usage = extra_data["agent_context_usage"].get("primary_agent_usage")
+                        if isinstance(primary_usage, dict):
+                            prompt_tokens = extra_data["usage"].get("prompt_tokens")
+                            if isinstance(prompt_tokens, int):
+                                context_window = int(primary_usage.get("context_window") or 0)
+                                primary_usage["used_tokens"] = prompt_tokens
+                                primary_usage["remaining_tokens"] = context_window - prompt_tokens
+                                primary_usage["percent"] = min(100, round((prompt_tokens / context_window) * 100, 2)) if context_window > 0 else 0
+                                primary_usage["source"] = "actual"
+                                primary_usage["count_type"] = "official"
                 if extra_data["expert_tasks"]:
                     final_extra_data["expert_tasks"] = extra_data["expert_tasks"]
                 if extra_data["expert_results"]:
@@ -390,6 +408,8 @@ class MessageService:
                     final_extra_data["dead_letter_tasks"] = extra_data["dead_letter_tasks"]
                 if extra_data["experience_chain_id"]:
                     final_extra_data["experience_chain_id"] = extra_data["experience_chain_id"]
+                if extra_data["agent_context_usage"]:
+                    final_extra_data["agent_context_usage"] = extra_data["agent_context_usage"]
 
                 ai_msg = await message_crud_service.save_ai_message(
                     session_id, 
@@ -471,7 +491,10 @@ class MessageService:
             
             yield {
                 "event": "done",
-                "data": {"session_id": session_id}
+                "data": {
+                    "session_id": session_id,
+                    "elapsed_seconds": round(time.time() - llm_total_start, 3)
+                }
             }
             
         except Exception as e:

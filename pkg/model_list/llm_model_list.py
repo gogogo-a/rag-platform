@@ -32,7 +32,7 @@ DEEPSEEK_CHAT = LLMModelConfig(
     model_type="cloud",
     temperature=0.3,
     max_tokens=4096,
-    context_window=int(os.getenv("DEEPSEEK_CONTEXT_WINDOW", "64000")),
+    context_window=int(os.getenv("DEEPSEEK_CONTEXT_WINDOW", "1000000")),
     timeout=30  # 🔥 调整为 30 秒，避免长时间等待
 )
 

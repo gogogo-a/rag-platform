@@ -90,10 +90,14 @@ const routes = [
         meta: { requiresAuth: true, requiresAdmin: true }
       },
       {
-        path: 'rag-evaluations',
-        name: 'AdminRAGEvaluations',
+        path: 'evaluations',
+        name: 'AdminEvaluations',
         component: () => import('@/views/admin/RAGEvaluationManagement.vue'),
         meta: { requiresAuth: true, requiresAdmin: true }
+      },
+      {
+        path: 'rag-evaluations',
+        redirect: '/admin/evaluations'
       },
       {
         path: 'prompts',
@@ -105,6 +109,12 @@ const routes = [
         path: 'agents',
         name: 'AdminAgents',
         component: () => import('@/views/admin/AgentManagement.vue'),
+        meta: { requiresAuth: true, requiresAdmin: true }
+      },
+      {
+        path: 'kafka',
+        name: 'AdminKafka',
+        component: () => import('@/views/admin/KafkaManagement.vue'),
         meta: { requiresAuth: true, requiresAdmin: true }
       }
     ]

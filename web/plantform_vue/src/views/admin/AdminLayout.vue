@@ -29,9 +29,9 @@
           <span>QA 缓存管理</span>
         </el-menu-item>
 
-        <el-menu-item index="/admin/rag-evaluations">
+        <el-menu-item index="/admin/evaluations">
           <el-icon><DataAnalysis /></el-icon>
-          <span>RAG 评估</span>
+          <span>评估管理</span>
         </el-menu-item>
 
         <el-menu-item index="/admin/prompts">
@@ -42,6 +42,11 @@
         <el-menu-item index="/admin/agents">
           <el-icon><Connection /></el-icon>
           <span>Agent 管理</span>
+        </el-menu-item>
+
+        <el-menu-item index="/admin/kafka">
+          <el-icon><Share /></el-icon>
+          <span>Kafka 可视化</span>
         </el-menu-item>
 
         <el-menu-item index="/admin/monitor">
@@ -68,7 +73,7 @@
 </template>
 
 <script setup>
-import { User, Document, Monitor, DocumentCopy, ChatDotRound, DataAnalysis, EditPen, Connection } from '@element-plus/icons-vue'
+import { User, Document, Monitor, DocumentCopy, ChatDotRound, DataAnalysis, EditPen, Connection, Share } from '@element-plus/icons-vue'
 </script>
 
 <style scoped>
@@ -77,6 +82,7 @@ import { User, Document, Monitor, DocumentCopy, ChatDotRound, DataAnalysis, Edit
   width: 100%;
   height: 100%;
   overflow: hidden;
+  background: var(--bg-primary);
 }
 
 .admin-sidebar {
@@ -112,13 +118,13 @@ import { User, Document, Monitor, DocumentCopy, ChatDotRound, DataAnalysis, Edit
 }
 
 .admin-menu .el-menu-item:hover {
-  background: rgba(99, 102, 241, 0.1);
+  background: var(--component-hover-bg);
 }
 
 .admin-menu .el-menu-item.is-active {
-  background: rgba(99, 102, 241, 0.15);
+  background: var(--component-hover-bg);
   color: var(--primary-color);
-  box-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
+  box-shadow: inset 3px 0 0 var(--primary-color);
 }
 
 .admin-main {
@@ -126,6 +132,7 @@ import { User, Document, Monitor, DocumentCopy, ChatDotRound, DataAnalysis, Edit
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  background: var(--bg-primary);
 }
 
 /* 路由过渡动画 */

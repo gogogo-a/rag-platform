@@ -144,8 +144,17 @@ onMounted(() => {
   width: 100%;
   height: 100%;
   z-index: -1;
-  background: linear-gradient(180deg, #0a0e27 0%, #151932 50%, #1e2139 100%);
+  background:
+    linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 52%, var(--bg-tertiary) 100%);
   overflow: hidden;
+}
+
+html.light .particle-background canvas {
+  opacity: 0.18;
+}
+
+html.dark .particle-background canvas {
+  opacity: 1;
 }
 
 canvas {
@@ -154,4 +163,3 @@ canvas {
   height: 100%;
 }
 </style>
-

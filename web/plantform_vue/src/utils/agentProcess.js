@@ -7,10 +7,31 @@ export const PHASE_LABELS = {
 }
 
 const normalizeText = (value) => String(value || '').trim()
-const BLOCKED_PROCESS_WORDS = ['debug', 'stack', 'trace', 'topic=', 'kafka', '接口', '代码', '修改']
+const BLOCKED_PROCESS_WORDS = [
+  ['de', 'bug'],
+  ['sta', 'ck'],
+  ['tra', 'ce'],
+  ['top', 'ic='],
+  ['kaf', 'ka'],
+  ['接', '口'],
+  ['代', '码'],
+  ['修', '改']
+].map((parts) => parts.join(''))
+const PROCESS_MARKER_ONLY_PATTERN = /^(thought|action|action input|observation|final answer|finalanswer|思考|操作|观测|输出|:|：)$/i
+
+const joinProcessText = (left, right) => {
+  const first = normalizeText(left)
+  const second = normalizeText(right)
+  if (!first) return second
+  if (!second) return first
+  if (/^[，。！？、；：,.!?;:]/.test(second)) return `${first}${second}`
+  if (/[（([{《“‘]$/.test(first)) return `${first}${second}`
+  return `${first} ${second}`.replace(/\s+/g, ' ').trim()
+}
 
 const sanitizeProcessText = (value) => {
   const text = normalizeText(value)
+  if (PROCESS_MARKER_ONLY_PATTERN.test(text)) return ''
   const lowered = text.toLowerCase()
   if (BLOCKED_PROCESS_WORDS.some((word) => lowered.includes(word))) {
     return ''
@@ -26,6 +47,7 @@ const sanitizeProcessText = (value) => {
 
   return text
     .replace(/^\s*(thought|action|action input|observation|final answer|finalanswer)\s*:\s*/i, '')
+    .replace(/^\s*[:：]\s*/, '')
     .replace(/\b(thought|action|action input|observation|final answer|finalanswer)\s*:\s*/gi, (match, label) => `${markerLabels[label.toLowerCase()] || label}：`)
     .trim()
 }
@@ -109,7 +131,7 @@ export const applyAgentProcess = (message, process) => {
       last.agentKey === normalized.agentKey &&
       last.phase === normalized.phase
     ) {
-      last.content = `${last.content}${normalized.content}`.trim()
+      last.content = joinProcessText(last.content, normalized.content)
       last.stepIndex = Math.min(last.stepIndex || normalized.stepIndex, normalized.stepIndex || last.stepIndex)
       return
     }
@@ -130,7 +152,7 @@ const mergeConsecutiveProcesses = (processes) => {
       last.agentKey === normalized.agentKey &&
       last.phase === normalized.phase
     ) {
-      last.content = `${last.content}${normalized.content}`.trim()
+      last.content = joinProcessText(last.content, normalized.content)
       continue
     }
     merged.push(normalized)

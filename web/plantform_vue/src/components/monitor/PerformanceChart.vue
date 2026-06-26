@@ -5,6 +5,7 @@
 <script setup>
 import { ref, onMounted, watch, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
+import { getCurrentTheme } from '@/utils/theme'
 
 const props = defineProps({
   title: {
@@ -23,11 +24,27 @@ const props = defineProps({
 
 const chartRef = ref(null)
 let chartInstance = null
+let resizeHandler = null
+
+const getChartTheme = () => (getCurrentTheme() === 'dark' ? 'dark' : undefined)
+
+const getChartColors = () => {
+  const isDark = getCurrentTheme() === 'dark'
+  return {
+    text: isDark ? '#e2e8f0' : '#172033',
+    muted: isDark ? '#94a3b8' : '#4b587c',
+    border: isDark ? '#2d3250' : '#d8deef',
+    tooltipBg: isDark ? 'rgba(20, 25, 47, 0.95)' : 'rgba(255, 255, 255, 0.98)'
+  }
+}
 
 const initChart = () => {
   if (!chartRef.value) return
+
+  chartInstance?.dispose()
+  const colors = getChartColors()
   
-  chartInstance = echarts.init(chartRef.value, 'dark')
+  chartInstance = echarts.init(chartRef.value, getChartTheme())
   
   const option = {
     backgroundColor: 'transparent',
@@ -35,17 +52,17 @@ const initChart = () => {
       text: props.title,
       left: 'center',
       textStyle: {
-        color: '#e2e8f0',
+        color: colors.text,
         fontSize: 16,
         fontWeight: 'bold'
       }
     },
     tooltip: {
       trigger: 'axis',
-      backgroundColor: 'rgba(20, 25, 47, 0.95)',
+      backgroundColor: colors.tooltipBg,
       borderColor: 'rgba(99, 102, 241, 0.5)',
       textStyle: {
-        color: '#e2e8f0'
+        color: colors.text
       },
       axisPointer: {
         type: 'cross',
@@ -69,35 +86,35 @@ const initChart = () => {
             <span style="display: inline-block; width: 10px; height: 10px; background: #6366f1; border-radius: 50%; margin-right: 8px;"></span>`
         
         if (useTokenMetric) {
-          tooltipText += `<span style="color: #94a3b8;">每1万token: </span>
-            <span style="color: #e2e8f0; font-weight: bold; margin-left: 8px;">${param.value.toFixed(4)} 秒</span>
+          tooltipText += `<span style="color: ${colors.muted};">每1万token: </span>
+            <span style="color: ${colors.text}; font-weight: bold; margin-left: 8px;">${param.value.toFixed(4)} 秒</span>
           </div>`
           
           if (item.duration_s !== undefined) {
-            tooltipText += `<div style="margin-left: 18px; color: #94a3b8; font-size: 12px;">
+            tooltipText += `<div style="margin-left: 18px; color: ${colors.muted}; font-size: 12px;">
               耗时: ${item.duration_s.toFixed(3)} 秒
             </div>`
           }
           
           if (item.tokens_per_second !== undefined) {
-            tooltipText += `<div style="margin-left: 18px; color: #94a3b8; font-size: 12px;">
+            tooltipText += `<div style="margin-left: 18px; color: ${colors.muted}; font-size: 12px;">
               速度: ${item.tokens_per_second.toFixed(0)} tokens/s
             </div>`
           }
           
           if (item.metadata?.token_count !== undefined) {
-            tooltipText += `<div style="margin-left: 18px; color: #94a3b8; font-size: 12px;">
+            tooltipText += `<div style="margin-left: 18px; color: ${colors.muted}; font-size: 12px;">
               Token数: ${item.metadata.token_count}
             </div>`
           }
         } else {
           // 使用耗时作为主指标
-          tooltipText += `<span style="color: #94a3b8;">耗时: </span>
-            <span style="color: #e2e8f0; font-weight: bold; margin-left: 8px;">${param.value.toFixed(3)} 秒</span>
+          tooltipText += `<span style="color: ${colors.muted};">耗时: </span>
+            <span style="color: ${colors.text}; font-weight: bold; margin-left: 8px;">${param.value.toFixed(3)} 秒</span>
           </div>`
           
           if (item.metadata?.status) {
-            tooltipText += `<div style="margin-left: 18px; color: #94a3b8; font-size: 12px;">
+            tooltipText += `<div style="margin-left: 18px; color: ${colors.muted}; font-size: 12px;">
               状态: ${item.metadata.status}
             </div>`
           }
@@ -123,11 +140,11 @@ const initChart = () => {
       }),
       axisLine: {
         lineStyle: {
-          color: '#2d3250'
+          color: colors.border
         }
       },
       axisLabel: {
-        color: '#94a3b8',
+        color: colors.muted,
         fontSize: 11
       }
     },
@@ -135,20 +152,20 @@ const initChart = () => {
       type: 'value',
       name: props.unit,
       nameTextStyle: {
-        color: '#94a3b8'
+        color: colors.muted
       },
       axisLine: {
         lineStyle: {
-          color: '#2d3250'
+          color: colors.border
         }
       },
       axisLabel: {
-        color: '#94a3b8',
+        color: colors.muted,
         fontSize: 11
       },
       splitLine: {
         lineStyle: {
-          color: '#2d3250',
+          color: colors.border,
           type: 'dashed'
         }
       }
@@ -199,19 +216,27 @@ const initChart = () => {
 }
 
 watch(() => props.data, () => {
-  if (chartInstance) {
-    initChart()
-  }
+  initChart()
 }, { deep: true })
+
+const handleThemeChange = () => {
+  initChart()
+}
 
 onMounted(() => {
   initChart()
-  window.addEventListener('resize', () => {
+  resizeHandler = () => {
     chartInstance?.resize()
-  })
+  }
+  window.addEventListener('resize', resizeHandler)
+  window.addEventListener('plantform-theme-change', handleThemeChange)
 })
 
 onUnmounted(() => {
+  if (resizeHandler) {
+    window.removeEventListener('resize', resizeHandler)
+  }
+  window.removeEventListener('plantform-theme-change', handleThemeChange)
   chartInstance?.dispose()
 })
 </script>
@@ -222,4 +247,3 @@ onUnmounted(() => {
   height: 300px;
 }
 </style>
-

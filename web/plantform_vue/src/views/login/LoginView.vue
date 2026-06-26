@@ -29,15 +29,14 @@ import LoginForm from '@/components/login/LoginForm.vue'
 
 .login-card {
   padding: 40px;
-  background: rgba(21, 25, 50, 0.9);
+  background: var(--component-bg);
   backdrop-filter: blur(20px);
   border: 1px solid var(--border-color);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 8px 32px var(--shadow-color);
 }
 
 .login-card:hover {
   border-color: var(--neon-blue);
-  box-shadow: 0 0 30px rgba(0, 217, 255, 0.3);
+  box-shadow: 0 0 30px var(--shadow-color);
 }
 </style>
-

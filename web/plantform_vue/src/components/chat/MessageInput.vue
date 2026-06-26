@@ -23,18 +23,16 @@
         class="agent-mode-toggle"
       />
 
-      <el-tooltip :content="showThinking ? '隐藏过程' : '显示过程'" placement="top">
-        <el-button
-          text
-          :icon="showThinking ? View : Hide"
-          @click="handleToggleThinking"
-          size="small"
-          :class="{ 'thinking-active': showThinking }"
-          class="toolbar-button thinking-button"
-        >
-          {{ showThinking ? '隐藏过程' : '显示过程' }}
-        </el-button>
-      </el-tooltip>
+      <el-button
+        text
+        :icon="showThinking ? View : Hide"
+        @click="handleToggleThinking"
+        size="small"
+        :class="{ 'thinking-active': showThinking }"
+        class="toolbar-button thinking-button"
+      >
+        {{ showThinking ? '隐藏过程' : '显示过程' }}
+      </el-button>
 
       <el-button text :icon="Upload" size="small" class="toolbar-button upload-button" @click="handleSelectFile">
         上传文件
@@ -407,7 +405,7 @@ defineExpose({
   align-items: center;
   gap: 12px;
   padding: 32px;
-  background: rgba(20, 25, 47, 0.9);
+  background: var(--component-bg);
   border-radius: 12px;
   border: 1px solid var(--primary-color);
 }

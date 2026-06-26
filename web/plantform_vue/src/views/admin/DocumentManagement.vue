@@ -486,9 +486,9 @@ onMounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: var(--bg-secondary);
+  background: var(--component-bg);
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 20px;
   overflow: hidden;
 }
@@ -638,4 +638,3 @@ onMounted(() => {
   color: var(--text-secondary);
 }
 </style>
-
