@@ -39,6 +39,7 @@ class MongoDB:
         from internal.model.evaluation import EvaluationModel
         from internal.model.benchmark import BenchmarkModel
         from internal.model.evaluation_config import EvaluationConfigModel
+        from internal.model.evaluation_case import EvaluationCaseModel
         from internal.model.prompt import PromptModel
         from internal.model.expert_experience import ExpertExperienceModel
         from internal.model.agent_config import AgentConfigModel
@@ -75,6 +76,7 @@ class MongoDB:
                     EvaluationModel,
                     BenchmarkModel,
                     EvaluationConfigModel,
+                    EvaluationCaseModel,
                     PromptModel,
                     ExpertExperienceModel,
                     AgentConfigModel
@@ -82,7 +84,7 @@ class MongoDB:
             )
             print(f"✓ Beanie ODM 初始化成功！")
             print(f"✓ 数据库: {database_name}")
-            print(f"✓ 集合: documents, message, user_info, session, thought_chains, chunks, qa_caches, evaluations, benchmarks, agent_prompts, expert_experiences, agent_configs")
+            print(f"✓ 集合: documents, message, user_info, session, thought_chains, chunks, qa_caches, evaluations, benchmarks, evaluation_cases, agent_prompts, expert_experiences, agent_configs")
             install_database_return_logger()
             
             # 标记为已初始化

@@ -255,6 +255,8 @@ class RAGEvaluationService:
             "ragas_sample_rate": 1.0,
             "ragas_max_chunks_per_question": 3,
             "ragas_min_retrieval_score": 0.05,
+            "evaluation_enabled": True,
+            "evaluation_sample_rate": 0.3,
         }
 
     def update_config(self, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -271,6 +273,8 @@ class RAGEvaluationService:
                     "ragas_sample_rate": config.ragas_sample_rate,
                     "ragas_max_chunks_per_question": config.ragas_max_chunks_per_question,
                     "ragas_min_retrieval_score": config.ragas_min_retrieval_score,
+                    "evaluation_enabled": getattr(config, "evaluation_enabled", True),
+                    "evaluation_sample_rate": getattr(config, "evaluation_sample_rate", 0.3),
                 }
         except Exception:
             pass
@@ -468,14 +472,89 @@ class RAGEvaluationService:
             return False
         if score < float(config.get("ragas_min_retrieval_score", 0.0) or 0.0):
             return False
-        if eligible_count >= int(config.get("ragas_max_chunks_per_question", 3) or 0):
-            return False
-        sample_rate = float(config.get("ragas_sample_rate", 1.0) or 0.0)
+        sample_rate = float(config.get("evaluation_sample_rate", 0.3) or 0.0)
         if sample_rate <= 0:
             return False
         if sample_rate < 1.0 and random.random() > sample_rate:
             return False
         return True
+
+    async def save_reply_evaluation_record(
+        self,
+        question: str,
+        answer: str,
+        session_id: str,
+        user_id: str,
+        message_id: str,
+        extra_data: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Any]:
+        config = await self.get_config()
+        if not config.get("evaluation_enabled", True):
+            return None
+        sample_rate = _clamp_score(config.get("evaluation_sample_rate", 0.3))
+        if sample_rate <= 0:
+            return None
+        if sample_rate < 1.0 and random.random() > sample_rate:
+            return None
+
+        extra_data = extra_data or {}
+        evaluation_type = _classify_reply_evaluation_type(extra_data)
+        contexts = _build_reply_evaluation_contexts(extra_data)
+        quality = await self.llm_quality_evaluator.evaluate(
+            question=question,
+            answer=answer,
+            contexts=contexts,
+            evaluation_type=evaluation_type,
+        )
+        llm_score = _clamp_score(quality.get("score", 0.0))
+        rule_score = _reply_rule_score(extra_data)
+        score_reason = str(quality.get("reason") or "").strip()
+        now = datetime.now()
+        record = self.evaluation_model(
+            target_id=message_id,
+            target_type="message",
+            question=question,
+            answer=answer,
+            session_id=session_id,
+            user_id=user_id,
+            message_id=message_id,
+            tool_name=_first_tool_name(extra_data),
+            document_uuid="",
+            filename="",
+            chunk_index=0,
+            retrieved_text="",
+            vector_score=0.0,
+            rerank_score=0.0,
+            evaluation_type=evaluation_type,
+            llm_score=llm_score,
+            rule_score=rule_score,
+            score_reason=score_reason,
+            score_breakdown=_build_score_breakdown(llm_score, rule_score, {
+                "rule_score_source": "reply_rule",
+                "rule_score_raw": rule_score,
+                "rule_score_mapping": "clamp",
+                "rule_score_center": RERANK_SCORE_CENTER,
+                "rule_score_scale": RERANK_SCORE_SCALE,
+            }),
+            faithfulness=0.0,
+            answer_relevance=0.0,
+            context_precision=0.0,
+            context_recall=0.0,
+            overall_score=_combine_scores(llm_score, rule_score),
+            evaluator="llm",
+            comment=score_reason,
+            dataset_type="production",
+            ragas_status="completed",
+            ragas_error="",
+            queue_status="completed",
+            queued_at=now,
+            started_at=now,
+            completed_at=now,
+            retry_count=0,
+            created_at=now,
+        )
+        await record.insert()
+        return record
 
     async def run_ragas_for_records(self, records: Sequence[Any]) -> None:
         for record in records:
@@ -731,6 +810,14 @@ def _serialize_rag_record(record: Any) -> Dict[str, Any]:
         "rule_score": rule_score,
         "score_reason": score_reason,
         "score_breakdown": _record_score_breakdown(record, llm_score, rule_score, rule_calibration),
+        "case_id": getattr(record, "case_id", "") or "",
+        "case_name": getattr(record, "case_name", "") or "",
+        "suite_type": getattr(record, "suite_type", "") or "",
+        "turn_index": getattr(record, "turn_index", 0) or 0,
+        "agent_mode": getattr(record, "agent_mode", "") or "",
+        "target_agent": getattr(record, "target_agent", "") or "",
+        "required_tools": list(getattr(record, "required_tools", []) or []),
+        "triggered_tools": list(getattr(record, "triggered_tools", []) or []),
         "faithfulness": getattr(record, "faithfulness", 0.0) or 0.0,
         "answer_relevance": getattr(record, "answer_relevance", 0.0) or 0.0,
         "context_precision": getattr(record, "context_precision", 0.0) or 0.0,
@@ -762,6 +849,81 @@ def _record_evaluation_type(record: Any) -> str:
     ):
         return "rag"
     return "normal_reply"
+
+
+def _classify_reply_evaluation_type(extra_data: Dict[str, Any]) -> str:
+    if _has_multi_agent_data(extra_data):
+        return "multi_agent"
+    if _is_long_context(extra_data):
+        return "long_context"
+    if _has_tool_call_data(extra_data):
+        return "tool_call"
+    return "normal_reply"
+
+
+def _has_multi_agent_data(extra_data: Dict[str, Any]) -> bool:
+    return bool(
+        extra_data.get("expert_results")
+        or extra_data.get("expert_tasks")
+        or extra_data.get("agent_manifest")
+    )
+
+
+def _is_long_context(extra_data: Dict[str, Any]) -> bool:
+    usage = extra_data.get("agent_context_usage") or {}
+    candidates = []
+    if isinstance(usage, dict):
+        primary = usage.get("primary_agent_usage")
+        if isinstance(primary, dict):
+            candidates.append(primary)
+        child_usages = usage.get("child_agent_usages")
+        if isinstance(child_usages, list):
+            candidates.extend([item for item in child_usages if isinstance(item, dict)])
+    return any(_safe_float(item.get("percent")) >= 75 for item in candidates)
+
+
+def _has_tool_call_data(extra_data: Dict[str, Any]) -> bool:
+    return bool(
+        extra_data.get("actions")
+        or extra_data.get("observations")
+        or extra_data.get("agent_processes")
+    )
+
+
+def _build_reply_evaluation_contexts(extra_data: Dict[str, Any]) -> List[str]:
+    contexts = []
+    documents = extra_data.get("documents")
+    if documents:
+        contexts.append(f"关联文档：{json.dumps(documents, ensure_ascii=False)}")
+    agent_processes = extra_data.get("agent_processes")
+    if agent_processes:
+        contexts.append(f"过程记录：{json.dumps(agent_processes, ensure_ascii=False)}")
+    usage = extra_data.get("agent_context_usage")
+    if usage:
+        contexts.append(f"上下文用量：{json.dumps(usage, ensure_ascii=False)}")
+    return contexts
+
+
+def _reply_rule_score(extra_data: Dict[str, Any]) -> float:
+    if _has_multi_agent_data(extra_data):
+        return 1.0 if extra_data.get("expert_results") else 0.6
+    if _is_long_context(extra_data):
+        return 0.8
+    if _has_tool_call_data(extra_data):
+        return 1.0 if extra_data.get("observations") or extra_data.get("agent_processes") else 0.7
+    return 1.0
+
+
+def _first_tool_name(extra_data: Dict[str, Any]) -> str:
+    actions = extra_data.get("actions") or []
+    if actions:
+        first_action = str(actions[0])
+        return first_action.split("(", 1)[0].strip()
+    processes = extra_data.get("agent_processes") or []
+    for item in processes:
+        if isinstance(item, dict) and item.get("tool_name"):
+            return str(item["tool_name"])
+    return ""
 
 
 def _record_rule_score(record: Any) -> float:

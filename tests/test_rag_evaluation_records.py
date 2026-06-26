@@ -96,6 +96,42 @@ class FakeQueueProducer:
         return self.success
 
 
+class FakeConfigRecord:
+    def __init__(self, **kwargs):
+        self.key = kwargs.get("key", "ragas")
+        self.ragas_enabled = kwargs.get("ragas_enabled", True)
+        self.ragas_queue_enabled = kwargs.get("ragas_queue_enabled", True)
+        self.ragas_sample_rate = kwargs.get("ragas_sample_rate", 1.0)
+        self.ragas_max_chunks_per_question = kwargs.get("ragas_max_chunks_per_question", 3)
+        self.ragas_min_retrieval_score = kwargs.get("ragas_min_retrieval_score", 0.0)
+        self.evaluation_enabled = kwargs.get("evaluation_enabled", True)
+        self.evaluation_sample_rate = kwargs.get("evaluation_sample_rate", 0.3)
+        self.updated_at = kwargs.get("updated_at", datetime.now())
+        self.save = AsyncMock()
+
+
+class FakeConfigModel:
+    key = object()
+    record = None
+
+    def __init__(self, **kwargs):
+        self.record = FakeConfigRecord(**kwargs)
+
+    @classmethod
+    def find_one(cls, *_conditions):
+        return FakeConfigAwaitable(cls.record)
+
+
+class FakeConfigAwaitable:
+    def __init__(self, record):
+        self.record = record
+
+    def __await__(self):
+        async def _result():
+            return self.record
+        return _result().__await__()
+
+
 async def _collect_async_events(generator):
     return [event async for event in generator]
 
@@ -108,6 +144,7 @@ class FakeRAGASDependencyMissingEvaluator:
 class RAGEvaluationRecordServiceTest(unittest.TestCase):
     def setUp(self):
         FakeEvaluationRecord.records = []
+        FakeConfigModel.record = None
 
     def test_save_rag_call_records_chunks_with_scores(self):
         queue = FakeQueueProducer()
@@ -116,6 +153,7 @@ class RAGEvaluationRecordServiceTest(unittest.TestCase):
             ragas_evaluator=FakeProductionRAGASEvaluator(),
             queue_producer=queue,
         )
+        service.update_config({"evaluation_sample_rate": 1.0})
 
         records = asyncio.run(service.save_rag_call_records(
             question="制度怎么查询？",
@@ -193,35 +231,38 @@ class RAGEvaluationRecordServiceTest(unittest.TestCase):
         self.assertEqual(records[4].score_breakdown["rule_score_mapping"], "clamp")
 
     def test_ai_stream_forwards_tool_results_for_rag_evaluation(self):
-        event_queue = queue.Queue()
-        event_queue.put((
-            "tool_result",
-            {
-                "tool_name": "knowledge_search",
-                "documents": [{"uuid": "doc-1", "name": "制度说明.pdf"}],
-                "results": [
-                    {
-                        "text": "制度查询说明正文",
-                        "metadata": {"document_uuid": "doc-1", "filename": "制度说明.pdf"},
-                        "vector_score": 0.71,
-                    }
-                ],
-            },
-        ))
+        async def run_case():
+            event_queue = queue.Queue()
+            event_queue.put((
+                "tool_result",
+                {
+                    "tool_name": "knowledge_search",
+                    "documents": [{"uuid": "doc-1", "name": "制度说明.pdf"}],
+                    "results": [
+                        {
+                            "text": "制度查询说明正文",
+                            "metadata": {"document_uuid": "doc-1", "filename": "制度说明.pdf"},
+                            "vector_score": 0.71,
+                        }
+                    ],
+                },
+            ))
 
-        async def finished_task():
-            return "ok"
+            async def finished_task():
+                return "ok"
 
-        task = asyncio.ensure_future(finished_task())
-        asyncio.get_event_loop().run_until_complete(task)
-        events = asyncio.run(_collect_async_events(
-            AIReplyService()._process_event_queue(
-                event_queue,
-                task,
-                StreamParser(),
-                [],
+            task = asyncio.create_task(finished_task())
+            await task
+            return await _collect_async_events(
+                AIReplyService()._process_event_queue(
+                    event_queue,
+                    task,
+                    StreamParser(),
+                    [],
+                )
             )
-        ))
+
+        events = asyncio.run(run_case())
 
         self.assertEqual(events[0]["event"], "documents")
         self.assertEqual(events[0]["data"]["documents"][0]["uuid"], "doc-1")
@@ -264,12 +305,39 @@ class RAGEvaluationRecordServiceTest(unittest.TestCase):
         self.assertEqual(records[0].ragas_status, "skipped")
         self.assertEqual(queue.messages, [])
 
+    def test_rag_evaluation_uses_unified_evaluation_sample_rate(self):
+        queue = FakeQueueProducer()
+        service = RAGEvaluationService(
+            evaluation_model=FakeEvaluationRecord,
+            config_model=FakeConfigModel,
+            queue_producer=queue,
+        )
+        service.update_config({
+            "evaluation_sample_rate": 0.0,
+            "ragas_enabled": True,
+            "ragas_queue_enabled": True,
+            "ragas_sample_rate": 1.0,
+        })
+
+        records = asyncio.run(service.save_rag_call_records(
+            question="制度怎么查询？",
+            answer="可以在知识库查询。",
+            session_id="session-1",
+            user_id="user-1",
+            message_id="message-1",
+            rag_results=[{"text": "制度查询说明正文", "metadata": {}, "vector_score": 0.71}],
+        ))
+
+        self.assertEqual(records[0].queue_status, "skipped")
+        self.assertEqual(len(queue.messages), 0)
+
     def test_queue_failure_keeps_chat_path_non_blocking(self):
         queue = FakeQueueProducer(success=False)
         service = RAGEvaluationService(
             evaluation_model=FakeEvaluationRecord,
             queue_producer=queue,
         )
+        service.update_config({"evaluation_sample_rate": 1.0})
 
         records = asyncio.run(service.save_rag_call_records(
             question="制度怎么查询？",

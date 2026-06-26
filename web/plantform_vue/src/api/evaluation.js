@@ -37,3 +37,26 @@ export function requeueRAGEvaluation(evaluationId) {
     method: 'post'
   })
 }
+
+export function getEvaluationCases(params) {
+  return request({
+    url: '/evaluations/cases',
+    method: 'get',
+    params
+  })
+}
+
+export function runEvaluationCase(caseId, data = {}) {
+  return request({
+    url: `/evaluations/cases/${caseId}/run`,
+    method: 'post',
+    data
+  })
+}
+
+export function getEvaluationCaseResults(caseId) {
+  return request({
+    url: `/evaluations/cases/${caseId}/results`,
+    method: 'get'
+  })
+}

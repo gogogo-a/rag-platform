@@ -30,18 +30,72 @@
       </div>
     </div>
 
-    <div class="type-tabs">
+    <div class="case-panel">
+      <div class="case-panel-header">
+        <div>
+          <h3>固定测试集</h3>
+          <p>按 MCP、Agent 和组合流程分别验证对话质量</p>
+        </div>
+        <div class="case-actions">
+          <el-segmented v-model="caseSuiteType" :options="caseSuiteOptions" @change="fetchCases" />
+          <el-button :icon="RefreshRight" @click="fetchCases">刷新测试集</el-button>
+        </div>
+      </div>
+      <el-table
+        v-loading="caseLoading"
+        :data="cases"
+        stripe
+        class="case-table"
+      >
+        <el-table-column prop="name" label="测试集" min-width="160" show-overflow-tooltip />
+        <el-table-column label="分类" width="90">
+          <template #default="{ row }">{{ suiteTypeText(row.suite_type) }}</template>
+        </el-table-column>
+        <el-table-column label="模式" width="90">
+          <template #default="{ row }">{{ row.agent_mode === 'expert' ? '专家' : '普通' }}</template>
+        </el-table-column>
+        <el-table-column label="目标" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ caseTargetText(row) }}</template>
+        </el-table-column>
+        <el-table-column label="轮次" width="80">
+          <template #default="{ row }">{{ row.turn_count }}</template>
+        </el-table-column>
+        <el-table-column label="最低分" width="90">
+          <template #default="{ row }">{{ formatScore(row.min_score) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="120" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              text
+              type="primary"
+              size="small"
+              :loading="runningCaseId === row.case_id"
+              @click="handleRunCase(row)"
+            >
+              执行
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="lastCaseRun" class="case-run-summary">
+        <span>{{ lastCaseRun.case?.name }}</span>
+        <span>完成 {{ lastCaseRun.completed_turns }}/{{ lastCaseRun.total_turns }}</span>
+        <span>平均分 {{ formatScore(lastCaseRun.avg_score) }}</span>
+      </div>
+    </div>
+
+    <nav class="evaluation-subnav" aria-label="评估分类">
       <button
         v-for="item in evaluationTypes"
         :key="item.value"
-        class="type-tab"
+        class="subnav-item"
         :class="{ active: activeType === item.value }"
         @click="changeType(item.value)"
       >
         <span>{{ item.label }}</span>
-        <strong>{{ summary.type_counts?.[item.value] || 0 }}</strong>
+        <em>{{ summary.type_counts?.[item.value] || 0 }}</em>
       </button>
-    </div>
+    </nav>
 
     <div class="summary-grid">
       <div class="summary-item">
@@ -79,11 +133,33 @@
     </div>
 
     <div class="config-panel">
-      <el-switch v-model="configForm.ragas_enabled" active-text="启用 RAGAS" />
-      <el-switch v-model="configForm.ragas_queue_enabled" active-text="加入队列" />
-      <el-input-number v-model="configForm.ragas_sample_rate" :min="0" :max="1" :step="0.1" controls-position="right" />
-      <el-input-number v-model="configForm.ragas_max_chunks_per_question" :min="0" :max="20" controls-position="right" />
-      <el-input-number v-model="configForm.ragas_min_retrieval_score" :min="0" :max="1" :step="0.05" controls-position="right" />
+      <div class="config-field switch-field">
+        <span>回复质量评估</span>
+        <el-switch v-model="configForm.evaluation_enabled" />
+      </div>
+      <div class="config-field wide-field">
+        <span>评估抽样比例</span>
+        <el-slider
+          v-model="evaluationSamplePercent"
+          :min="0"
+          :max="100"
+          :step="5"
+          show-input
+          :show-input-controls="false"
+        />
+      </div>
+      <div class="config-field switch-field">
+        <span>RAGAS 评估</span>
+        <el-switch v-model="configForm.ragas_enabled" />
+      </div>
+      <div class="config-field switch-field">
+        <span>自动评估 RAG</span>
+        <el-switch v-model="configForm.ragas_queue_enabled" />
+      </div>
+      <div class="config-field">
+        <span>最低规则分</span>
+        <el-input-number v-model="configForm.ragas_min_retrieval_score" :min="0" :max="1" :step="0.05" controls-position="right" />
+      </div>
       <el-button type="primary" @click="saveConfig">保存配置</el-button>
     </div>
 
@@ -96,6 +172,12 @@
         @row-click="handleRowClick"
       >
         <el-table-column prop="question" label="问题" min-width="220" show-overflow-tooltip />
+        <el-table-column label="测试集" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.case_name || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="分类" width="90">
+          <template #default="{ row }">{{ row.suite_type ? suiteTypeText(row.suite_type) : '-' }}</template>
+        </el-table-column>
         <el-table-column label="评估类型" width="130">
           <template #default="{ row }">{{ evaluationTypeText(row.evaluation_type) }}</template>
         </el-table-column>
@@ -165,6 +247,8 @@
           <span>LLM 评分：{{ formatScore(detailData.llm_score) }}</span>
           <span>规则评分：{{ formatScore(detailData.rule_score) }}</span>
           <span>评估类型：{{ evaluationTypeText(detailData.evaluation_type) }}</span>
+          <span v-if="detailData.case_name">测试集：{{ detailData.case_name }}</span>
+          <span v-if="detailData.turn_index">轮次：{{ detailData.turn_index }}</span>
         </div>
         <template v-if="detailData.evaluation_type === 'rag'">
           <div class="detail-section">
@@ -193,16 +277,25 @@
 </template>
 
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { RefreshRight, Search } from '@element-plus/icons-vue'
-import { getEvaluationList, getRAGEvaluationConfig, requeueRAGEvaluation, updateRAGEvaluationConfig } from '@/api'
+import {
+  getEvaluationCases,
+  getEvaluationList,
+  getRAGEvaluationConfig,
+  requeueRAGEvaluation,
+  runEvaluationCase,
+  updateRAGEvaluationConfig
+} from '@/api'
 import CustomPagination from '@/components/public/CustomPagination.vue'
 import { useRoute } from 'vue-router'
 
 const loading = ref(false)
+const caseLoading = ref(false)
 const route = useRoute()
 const records = ref([])
+const cases = ref([])
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
@@ -211,6 +304,15 @@ const statusFilter = ref('')
 const activeType = ref('rag')
 const showDetailDialog = ref(false)
 const detailData = ref(null)
+const caseSuiteType = ref('')
+const runningCaseId = ref('')
+const lastCaseRun = ref(null)
+const caseSuiteOptions = [
+  { label: '全部', value: '' },
+  { label: 'MCP', value: 'mcp' },
+  { label: 'Agent', value: 'agent' },
+  { label: '组合流程', value: 'flow' }
+]
 const evaluationTypes = [
   { label: 'RAG 评估', value: 'rag' },
   { label: '正常回复评估', value: 'normal_reply' },
@@ -232,11 +334,17 @@ const summary = ref({
   type_counts: {}
 })
 const configForm = ref({
+  evaluation_enabled: true,
+  evaluation_sample_rate: 0.3,
   ragas_enabled: true,
   ragas_queue_enabled: true,
-  ragas_sample_rate: 1,
-  ragas_max_chunks_per_question: 3,
   ragas_min_retrieval_score: 0
+})
+const evaluationSamplePercent = computed({
+  get: () => Math.round((Number(configForm.value.evaluation_sample_rate) || 0) * 100),
+  set: (value) => {
+    configForm.value.evaluation_sample_rate = Number((Number(value || 0) / 100).toFixed(2))
+  }
 })
 
 const fetchRecords = async () => {
@@ -276,10 +384,10 @@ const fetchConfig = async () => {
   try {
     const data = await getRAGEvaluationConfig()
     configForm.value = {
+      evaluation_enabled: data.evaluation_enabled ?? true,
+      evaluation_sample_rate: data.evaluation_sample_rate ?? 0.3,
       ragas_enabled: data.ragas_enabled ?? true,
       ragas_queue_enabled: data.ragas_queue_enabled ?? true,
-      ragas_sample_rate: data.ragas_sample_rate ?? 1,
-      ragas_max_chunks_per_question: data.ragas_max_chunks_per_question ?? 3,
       ragas_min_retrieval_score: data.ragas_min_retrieval_score ?? 0
     }
   } catch (error) {
@@ -287,9 +395,30 @@ const fetchConfig = async () => {
   }
 }
 
+const fetchCases = async () => {
+  caseLoading.value = true
+  try {
+    const data = await getEvaluationCases({
+      suite_type: caseSuiteType.value || undefined,
+      enabled: true
+    })
+    cases.value = data.items || []
+  } catch (error) {
+    ElMessage.error('获取固定测试集失败')
+  } finally {
+    caseLoading.value = false
+  }
+}
+
 const saveConfig = async () => {
   try {
-    await updateRAGEvaluationConfig(configForm.value)
+    await updateRAGEvaluationConfig({
+      evaluation_enabled: configForm.value.evaluation_enabled,
+      evaluation_sample_rate: configForm.value.evaluation_sample_rate,
+      ragas_enabled: configForm.value.ragas_enabled,
+      ragas_queue_enabled: configForm.value.ragas_queue_enabled,
+      ragas_min_retrieval_score: configForm.value.ragas_min_retrieval_score
+    })
     ElMessage.success('保存成功')
   } catch (error) {
     ElMessage.error('保存配置失败')
@@ -303,6 +432,20 @@ const handleRequeue = async (row) => {
     fetchRecords()
   } catch (error) {
     ElMessage.error('加入队列失败')
+  }
+}
+
+const handleRunCase = async (row) => {
+  runningCaseId.value = row.case_id
+  try {
+    const data = await runEvaluationCase(row.case_id)
+    lastCaseRun.value = data
+    ElMessage.success('执行完成')
+    fetchRecords()
+  } catch (error) {
+    ElMessage.error('执行失败')
+  } finally {
+    runningCaseId.value = ''
   }
 }
 
@@ -350,6 +493,20 @@ const evaluationTypeText = (type) => {
   return item ? item.label : '评估'
 }
 
+const suiteTypeText = (type) => {
+  const map = {
+    mcp: 'MCP',
+    agent: 'Agent',
+    flow: '组合'
+  }
+  return map[type] || '测试'
+}
+
+const caseTargetText = (row) => {
+  const tools = Array.isArray(row.required_tools) ? row.required_tools.join('、') : ''
+  return row.target_agent || tools || row.description || '-'
+}
+
 const statusText = (status) => {
   const map = {
     pending: '待评估',
@@ -387,6 +544,7 @@ const formatDate = (dateStr) => {
 
 onMounted(() => {
   fetchConfig()
+  fetchCases()
   fetchRecords()
 })
 
@@ -427,48 +585,110 @@ watch(
   gap: 12px;
 }
 
-.type-tabs {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.type-tab {
-  min-height: 58px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
+.evaluation-subnav {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 0 14px;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 16px;
+  overflow-x: auto;
+}
+
+.subnav-item {
+  height: 44px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 18px;
   cursor: pointer;
+  white-space: nowrap;
+  font-size: 14px;
 }
 
-.type-tab.active {
-  border-color: var(--primary-color);
+.subnav-item.active {
+  border-bottom-color: var(--primary-color);
   color: var(--text-primary);
-  box-shadow: inset 3px 0 0 var(--primary-color);
 }
 
-.type-tab strong {
+.subnav-item em {
+  min-width: 24px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(106, 99, 255, 0.16);
   color: var(--text-primary);
-  font-size: 18px;
+  font-style: normal;
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.subnav-item.active em {
+  background: var(--primary-color);
+  color: #fff;
 }
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.case-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
   margin-bottom: 16px;
+}
+
+.case-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.case-panel-header h3 {
+  margin: 0 0 6px;
+  color: var(--text-primary);
+  font-size: 16px;
+}
+
+.case-panel-header p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.case-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.case-table {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.case-run-summary {
+  display: flex;
+  gap: 16px;
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .config-panel {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, auto));
+  grid-template-columns: repeat(4, minmax(0, auto));
   align-items: center;
   gap: 12px;
   background: var(--bg-secondary);
@@ -476,16 +696,38 @@ watch(
   border-radius: 8px;
   padding: 14px 16px;
   margin-bottom: 16px;
+}
+
+.config-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.switch-field {
+  min-width: 140px;
+}
+
+.wide-field {
+  min-width: 280px;
+  grid-column: span 2;
+}
+
+.wide-field :deep(.el-slider) {
+  flex: 1;
+  min-width: 180px;
 }
 
 .summary-item {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  padding: 14px 16px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .summary-label {
@@ -495,7 +737,7 @@ watch(
 
 .summary-item strong {
   color: var(--text-primary);
-  font-size: 22px;
+  font-size: 18px;
 }
 
 .page-content {

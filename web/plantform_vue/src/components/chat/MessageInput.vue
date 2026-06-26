@@ -63,14 +63,14 @@
       
       <el-button
         type="primary"
-        :icon="isSending ? Loading : Promotion"
-        :loading="isSending"
-        @click="handleSend"
-        :disabled="!inputMessage.trim() || isSending"
+        :icon="isSending ? VideoPause : Promotion"
+        @click="isSending ? handlePause() : handleSend()"
+        :disabled="!inputMessage.trim() && !isSending"
         class="send-button"
+        :class="{ 'is-pausing': isSending }"
         size="large"
       >
-        {{ isSending ? '发送中...' : '发送' }}
+        {{ isSending ? '暂停' : '发送' }}
       </el-button>
     </div>
 
@@ -92,16 +92,22 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useUserStore, useChatStore } from '@/store'
-import { Upload, Promotion, Loading, Document, Close, View, Hide } from '@element-plus/icons-vue'
+import { Upload, Promotion, VideoPause, Document, Close, View, Hide } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
-const emit = defineEmits(['send'])
+const emit = defineEmits(['send', 'pause'])
+const props = defineProps({
+  isStreaming: {
+    type: Boolean,
+    default: false
+  }
+})
 
 const userStore = useUserStore()
 const chatStore = useChatStore()
 
 const inputMessage = ref('')
-const isSending = ref(false)
+const isPreparing = ref(false)
 const uploadedFiles = ref([]) // 暂存的文件列表
 const fileInputRef = ref(null)
 const textareaRef = ref(null)
@@ -109,6 +115,7 @@ const isDragging = ref(false) // 拖拽状态
 const userLocation = ref(null) // 用户位置信息
 const isComposing = ref(false) // 输入法状态（是否正在输入中文）
 const showThinking = computed(() => chatStore.showThinking)
+const isSending = computed(() => isPreparing.value || props.isStreaming)
 const selectedAgentMode = computed({
   get: () => chatStore.agentMode,
   set: (mode) => chatStore.setAgentMode(mode)
@@ -201,6 +208,11 @@ const handleKeyDown = (event) => {
   }
 }
 
+const handlePause = () => {
+  if (!isSending.value) return
+  emit('pause')
+}
+
 // 发送消息
 const handleSend = async () => {
   if (!inputMessage.value.trim() || isSending.value) return
@@ -210,13 +222,13 @@ const handleSend = async () => {
   
   inputMessage.value = ''
   uploadedFiles.value = [] // 清空文件列表
-  isSending.value = true
+  isPreparing.value = true
 
   try {
     // 获取位置信息（异步，不阻塞消息发送）
     const location = await getUserLocation()
     
-    await emit('send', {
+    emit('send', {
       content: message,
       showThinking: chatStore.showThinking,
       agentMode: chatStore.agentMode,
@@ -226,7 +238,7 @@ const handleSend = async () => {
   } catch (error) {
     ElMessage.error('发送失败，请重试')
   } finally {
-    isSending.value = false
+    isPreparing.value = false
   }
 }
 

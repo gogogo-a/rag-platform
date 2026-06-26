@@ -5,6 +5,7 @@ from typing import Optional
 
 from api.v1.response_controller import json_response
 from internal.service.evaluation import RAGEvaluationService
+from internal.service.evaluation.conversation_regression_service import ConversationRegressionService
 from log import logger
 
 router = APIRouter(prefix="/evaluations", tags=["评估管理"])
@@ -16,6 +17,13 @@ class RAGEvaluationConfigRequest(BaseModel):
     ragas_sample_rate: Optional[float] = None
     ragas_max_chunks_per_question: Optional[int] = None
     ragas_min_retrieval_score: Optional[float] = None
+    evaluation_enabled: Optional[bool] = None
+    evaluation_sample_rate: Optional[float] = None
+
+
+class RunEvaluationCaseRequest(BaseModel):
+    user_id: Optional[str] = None
+    send_name: Optional[str] = None
 
 
 @router.get("", summary="获取评估记录")
@@ -74,6 +82,49 @@ async def get_rag_evaluation_config():
         return json_response("查询成功", 0, data)
     except Exception as e:
         logger.error(f"获取 RAG 评估配置失败: {e}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
+@router.get("/cases", summary="获取固定测试集")
+async def get_evaluation_cases(
+    suite_type: str = Query(default=None, description="测试集类型"),
+    enabled: Optional[bool] = Query(default=None, description="是否启用")
+):
+    try:
+        service = ConversationRegressionService()
+        data = await service.list_cases(suite_type=suite_type, enabled=enabled)
+        return json_response("查询成功", 0, data)
+    except Exception as e:
+        logger.error(f"获取固定测试集失败: {e}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
+@router.post("/cases/{case_id}/run", summary="执行固定测试集")
+async def run_evaluation_case(
+    case_id: str = Path(..., description="测试集ID"),
+    req: RunEvaluationCaseRequest = None,
+):
+    try:
+        service = ConversationRegressionService()
+        user_id = (req.user_id if req else None) or "admin"
+        send_name = (req.send_name if req else None) or "管理员"
+        data = await service.run_case(case_id=case_id, user_id=user_id, send_name=send_name)
+        return json_response("执行完成", 0, data)
+    except ValueError as e:
+        return json_response(str(e), -2)
+    except Exception as e:
+        logger.error(f"执行固定测试集失败: {e}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
+@router.get("/cases/{case_id}/results", summary="获取固定测试集结果")
+async def get_evaluation_case_results(case_id: str = Path(..., description="测试集ID")):
+    try:
+        service = ConversationRegressionService()
+        data = await service.get_case_results(case_id)
+        return json_response("查询成功", 0, data)
+    except Exception as e:
+        logger.error(f"获取固定测试集结果失败: {e}", exc_info=True)
         return json_response("系统错误", -1)
 
 

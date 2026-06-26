@@ -431,6 +431,21 @@ class MessageService:
                         rag_results=extra_data["rag_results"],
                         start_ragas=True,
                     )
+                else:
+                    from internal.service.evaluation import RAGEvaluationService
+
+                    evaluation_service = RAGEvaluationService()
+                    try:
+                        await evaluation_service.save_reply_evaluation_record(
+                            question=content,
+                            answer=ai_reply_full,
+                            session_id=session_id,
+                            user_id=user_id,
+                            message_id=ai_msg.uuid,
+                            extra_data=final_extra_data,
+                        )
+                    except Exception as evaluation_error:
+                        logger.error(f"回复评估失败: {evaluation_error}", exc_info=True)
                 
                 # 7.1 处理 thought_chain_id
                 thought_chain_id = None

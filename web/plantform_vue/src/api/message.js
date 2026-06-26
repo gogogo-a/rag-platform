@@ -28,7 +28,7 @@ export function getContextUsage(sessionId) {
  * @param {Object|FormData} data - 消息数据或 FormData
  * @param {Boolean} isFormData - 是否为 FormData
  */
-export function sendMessageStream(data, isFormData = false) {
+export function sendMessageStream(data, isFormData = false, options = {}) {
   const token = localStorage.getItem('token')
   const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
   
@@ -45,7 +45,8 @@ export function sendMessageStream(data, isFormData = false) {
   return fetch(`${baseURL}/messages`, {
     method: 'POST',
     headers: headers,
-    body: isFormData ? data : JSON.stringify(data)
+    body: isFormData ? data : JSON.stringify(data),
+    signal: options.signal
   })
 }
 
@@ -130,6 +131,7 @@ export function sendMessageStreamWithOptions(data, isFormData = false, options =
   return fetch(`${baseURL}/messages`, {
     method: 'POST',
     headers: headers,
-    body: body
+    body: body,
+    signal: options.signal
   })
 }

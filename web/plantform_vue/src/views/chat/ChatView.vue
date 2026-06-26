@@ -156,7 +156,12 @@
       </div>
 
       <div class="chat-input-wrapper">
-        <MessageInput ref="messageInputRef" @send="handleSendMessage" />
+        <MessageInput
+          ref="messageInputRef"
+          :is-streaming="isStreaming"
+          @send="handleSendMessage"
+          @pause="handlePauseStreaming"
+        />
       </div>
     </main>
   </div>
@@ -194,6 +199,8 @@ const contextUsage = ref(null)
 const executionStartedAt = ref(0)
 const executionElapsedSeconds = ref(0)
 const executionTimerId = ref(null)
+const streamAbortController = ref(null)
+const streamPausedByUser = ref(false)
 
 const userScrollAttempts = ref(0) // 用户尝试滚动的次数
 const allowFreeScroll = ref(false) // 是否允许自由滚动
@@ -240,6 +247,20 @@ const finishExecutionTimer = (elapsedSeconds = null) => {
     lastMessage.executionRunning = false
   }
   stopExecutionTimer()
+}
+
+const cleanupStreamingState = () => {
+  streamAbortController.value = null
+  isStreaming.value = false
+}
+
+const handlePauseStreaming = () => {
+  if (!isStreaming.value || !streamAbortController.value) return
+  streamPausedByUser.value = true
+  streamAbortController.value.abort()
+  finishExecutionTimer()
+  resetScrollState()
+  cleanupStreamingState()
 }
 
 const contextUsageLabel = computed(() => {
@@ -444,6 +465,8 @@ const handleSendMessage = async ({ content, showThinking, agentMode = chatStore.
   chatStore.addMessage(aiMessage)
 
   isStreaming.value = true
+  streamPausedByUser.value = false
+  streamAbortController.value = new AbortController()
 
   try {
     // 统一使用 FormData 发送（无论是否有文件）
@@ -472,7 +495,8 @@ const handleSendMessage = async ({ content, showThinking, agentMode = chatStore.
     // 使用支持额外选项的 API（跳过缓存、重新生成）
     const response = await sendMessageStreamWithOptions(formData, true, {
       skipCache: skipCache,
-      regenerateMessageId: regenerateMessageId
+      regenerateMessageId: regenerateMessageId,
+      signal: streamAbortController.value.signal
     })
 
     const reader = response.body.getReader()
@@ -481,6 +505,7 @@ const handleSendMessage = async ({ content, showThinking, agentMode = chatStore.
     let eventType = ''
 
     while (true) {
+      if (streamPausedByUser.value) break
       const { done, value } = await reader.read()
       if (done) break
 
@@ -489,6 +514,7 @@ const handleSendMessage = async ({ content, showThinking, agentMode = chatStore.
       buffer = lines.pop() || ''
 
       for (const line of lines) {
+        if (streamPausedByUser.value) break
         if (!line.trim()) continue
 
         if (line.startsWith('event: ')) {
@@ -499,6 +525,7 @@ const handleSendMessage = async ({ content, showThinking, agentMode = chatStore.
         if (line.startsWith('data: ')) {
           try {
             const data = JSON.parse(line.substring(6))
+            if (streamPausedByUser.value) break
             await handleSSEEvent(eventType, data)
           } catch (error) {
             ElMessage.error('消息接收失败，请重试')
@@ -507,18 +534,25 @@ const handleSendMessage = async ({ content, showThinking, agentMode = chatStore.
       }
     }
   } catch (error) {
+    if (error.name === 'AbortError') {
+      finishExecutionTimer()
+      return
+    }
+
     ElMessage.error('发送消息失败，请重试')
     
     // 移除失败的消息
     chatStore.currentMessages.pop()
     finishExecutionTimer()
   } finally {
-    isStreaming.value = false
+    cleanupStreamingState()
   }
 }
 
 // 处理 SSE 事件
 const handleSSEEvent = async (eventType, data) => {
+  if (streamPausedByUser.value) return
+
   const lastMessage = chatStore.currentMessages[chatStore.currentMessages.length - 1]
 
   switch (eventType) {
@@ -761,6 +795,9 @@ onDeactivated(() => {
 })
 
 onBeforeUnmount(() => {
+  if (streamAbortController.value) {
+    streamAbortController.value.abort()
+  }
   stopExecutionTimer()
 })
 

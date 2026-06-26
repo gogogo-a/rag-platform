@@ -50,6 +50,16 @@ class EvaluationModel(Document):
     overall_score: float = Field(default=0.0, description="综合得分")
     evaluator: str = Field(default="llm", description="评估者类型 (llm/human/ragas)")
     comment: Optional[str] = Field(None, description="详细评语/改进建议")
+
+    # 固定测试集
+    case_id: Optional[str] = Field(None, description="固定测试集ID")
+    case_name: Optional[str] = Field(None, description="固定测试集名称")
+    suite_type: Optional[str] = Field(None, description="测试集类型 (mcp/agent/flow)")
+    turn_index: Optional[int] = Field(None, description="测试轮次")
+    agent_mode: Optional[str] = Field(None, description="Agent 模式")
+    target_agent: Optional[str] = Field(None, description="目标专家")
+    required_tools: list[str] = Field(default_factory=list, description="必须覆盖的能力")
+    triggered_tools: list[str] = Field(default_factory=list, description="本轮覆盖到的能力")
     
     # 数据流向
     dataset_type: str = Field(default="production", description="数据集类型 (production/benchmark)")
@@ -64,6 +74,8 @@ class EvaluationModel(Document):
             "evaluation_type",
             "dataset_type",
             "overall_score",
+            "case_id",
+            "suite_type",
             "ragas_status",
             "queue_status",
             "created_at"

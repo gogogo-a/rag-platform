@@ -13,6 +13,8 @@ class EvaluationConfigModel(Document):
     ragas_sample_rate: float = Field(default=1.0, description="评估抽样比例")
     ragas_max_chunks_per_question: int = Field(default=3, description="每个问题最多评估片段数")
     ragas_min_retrieval_score: float = Field(default=0.0, description="最低检索分数")
+    evaluation_enabled: bool = Field(default=True, description="是否启用回复质量评估")
+    evaluation_sample_rate: float = Field(default=0.3, description="回复质量评估抽样比例")
     updated_at: datetime = Field(default_factory=datetime.now)
 
     class Settings:
