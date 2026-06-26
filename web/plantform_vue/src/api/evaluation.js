@@ -84,6 +84,14 @@ export function runEvaluationCase(caseId, data = {}) {
   })
 }
 
+export function runEvaluationCases(data = {}) {
+  return request({
+    url: '/evaluations/cases/run-all',
+    method: 'post',
+    data
+  })
+}
+
 export function getEvaluationCaseResults(caseId) {
   return request({
     url: `/evaluations/cases/${caseId}/results`,

@@ -24,6 +24,7 @@ class RAGEvaluationConfigRequest(BaseModel):
 class RunEvaluationCaseRequest(BaseModel):
     user_id: Optional[str] = None
     send_name: Optional[str] = None
+    suite_type: Optional[str] = None
 
 
 class EvaluationCaseRequest(BaseModel):
@@ -123,6 +124,20 @@ async def create_evaluation_case(req: EvaluationCaseRequest):
         return json_response(str(e), -2)
     except Exception as e:
         logger.error(f"新增固定测试集失败: {e}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
+@router.post("/cases/run-all", summary="执行固定测试集")
+async def run_evaluation_cases(req: RunEvaluationCaseRequest = None):
+    try:
+        service = ConversationRegressionService()
+        user_id = (req.user_id if req else None) or "admin"
+        send_name = (req.send_name if req else None) or "管理员"
+        suite_type = (req.suite_type if req else None) or None
+        data = await service.run_cases(user_id=user_id, send_name=send_name, suite_type=suite_type)
+        return json_response("执行完成", 0, data)
+    except Exception as e:
+        logger.error(f"执行固定测试集失败: {e}", exc_info=True)
         return json_response("系统错误", -1)
 
 

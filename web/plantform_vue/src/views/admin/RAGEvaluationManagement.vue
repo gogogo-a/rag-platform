@@ -30,6 +30,7 @@
       </div>
       <div v-else class="header-actions">
         <el-segmented v-model="caseSuiteType" :options="caseSuiteOptions" @change="fetchCases" />
+        <el-button type="primary" :loading="runningAllCases" @click="handleRunAllCases">一键执行</el-button>
         <el-button type="primary" @click="openCreateCase">新增测试集</el-button>
         <el-button :icon="RefreshRight" @click="fetchCases">刷新</el-button>
       </div>
@@ -96,7 +97,9 @@
       </el-table>
       <div v-if="lastCaseRun" class="case-run-summary">
         <span>{{ lastCaseRun.case?.name }}</span>
-        <span>完成 {{ lastCaseRun.completed_turns }}/{{ lastCaseRun.total_turns }}</span>
+        <span v-if="lastCaseRun.total_cases">测试集 {{ lastCaseRun.completed_cases }}/{{ lastCaseRun.total_cases }}</span>
+        <span>轮次 {{ lastCaseRun.completed_turns }}/{{ lastCaseRun.total_turns }}</span>
+        <span v-if="lastCaseRun.failed_cases">失败 {{ lastCaseRun.failed_cases }}</span>
         <span>平均分 {{ formatScore(lastCaseRun.avg_score) }}</span>
       </div>
     </div>
@@ -300,6 +303,26 @@
           <h4>测试轮次</h4>
           <p>{{ caseTurnsText(caseDetailData.turns) }}</p>
         </div>
+        <div class="detail-section">
+          <h4>最近执行结果</h4>
+          <div v-if="caseResultsLoading" class="empty-text">加载中</div>
+          <el-table v-else-if="caseResultRows.length" :data="caseResultRows" size="small" class="case-result-table">
+            <el-table-column label="轮次" width="70">
+              <template #default="{ row }">{{ row.turn_index }}</template>
+            </el-table-column>
+            <el-table-column prop="question" label="问题" min-width="180" show-overflow-tooltip />
+            <el-table-column label="综合评分" width="100">
+              <template #default="{ row }">{{ formatScore(row.overall_score) }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">{{ statusText(row.status) }}</template>
+            </el-table-column>
+            <el-table-column prop="created_at" label="时间" width="160">
+              <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
+            </el-table-column>
+          </el-table>
+          <div v-else class="empty-text">暂无执行结果</div>
+        </div>
       </div>
       <template #footer>
         <el-button @click="showCaseDetailDialog = false">关闭</el-button>
@@ -382,11 +405,13 @@ import { RefreshRight, Search } from '@element-plus/icons-vue'
 import {
   createEvaluationCase,
   deleteEvaluationCase,
+  getEvaluationCaseResults,
   getEvaluationCases,
   getEvaluationList,
   getRAGEvaluationConfig,
   requeueRAGEvaluation,
   runEvaluationCase,
+  runEvaluationCases,
   updateEvaluationCase,
   updateRAGEvaluationConfig
 } from '@/api'
@@ -409,9 +434,12 @@ const detailData = ref(null)
 const showCaseDetailDialog = ref(false)
 const showCaseFormDialog = ref(false)
 const caseDetailData = ref(null)
+const caseResultRows = ref([])
+const caseResultsLoading = ref(false)
 const caseFormMode = ref('create')
 const caseSuiteType = ref('')
 const runningCaseId = ref('')
+const runningAllCases = ref(false)
 const lastCaseRun = ref(null)
 const caseForm = ref(createEmptyCaseForm())
 const caseSuiteOptions = [
@@ -557,9 +585,35 @@ const handleRunCase = async (row) => {
   }
 }
 
-const openCaseDetail = (row) => {
+const handleRunAllCases = async () => {
+  runningAllCases.value = true
+  try {
+    const data = await runEvaluationCases({
+      suite_type: caseSuiteType.value || undefined
+    })
+    lastCaseRun.value = data
+    ElMessage.success('执行完成')
+    fetchRecords()
+  } catch (error) {
+    ElMessage.error('执行失败')
+  } finally {
+    runningAllCases.value = false
+  }
+}
+
+const openCaseDetail = async (row) => {
   caseDetailData.value = row
+  caseResultRows.value = []
   showCaseDetailDialog.value = true
+  caseResultsLoading.value = true
+  try {
+    const data = await getEvaluationCaseResults(row.case_id)
+    caseResultRows.value = data.items || []
+  } catch (error) {
+    ElMessage.error('获取执行结果失败')
+  } finally {
+    caseResultsLoading.value = false
+  }
 }
 
 const openCreateCase = () => {

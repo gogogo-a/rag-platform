@@ -295,8 +295,7 @@ const contextUsageTitle = computed(() => {
 
 const contextSourceLabel = computed(() => {
   if (!primaryContextUsage.value) return ''
-  if (primaryContextUsage.value.source === 'actual') return '实际用量'
-  return primaryContextUsage.value.count_type === 'estimated' ? '预估用量' : 'Token 统计'
+  return '当前上下文'
 })
 
 const contextMeterWidth = computed(() => {

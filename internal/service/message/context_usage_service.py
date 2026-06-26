@@ -123,10 +123,11 @@ class ContextUsageService:
     ) -> Dict[str, Any]:
         context_window = self.get_context_window()
         enriched, estimated_tokens = self._with_section_tokens(sections)
-        final_used_tokens = used_tokens if isinstance(used_tokens, int) and used_tokens >= 0 else estimated_tokens
+        actual_tokens = used_tokens if isinstance(used_tokens, int) and used_tokens >= 0 else None
+        final_used_tokens = max(estimated_tokens, actual_tokens) if actual_tokens is not None else estimated_tokens
         final_count_type = count_type or self.get_count_type()
         percent = self._calculate_percent(final_used_tokens, context_window)
-        return {
+        result = {
             "agent_key": agent_key,
             "agent_name": agent_name,
             "model_name": DEEPSEEK_CHAT.name,
@@ -135,10 +136,14 @@ class ContextUsageService:
             "used_tokens": final_used_tokens,
             "remaining_tokens": context_window - final_used_tokens,
             "percent": percent,
+            "estimated_tokens": estimated_tokens,
             "count_type": final_count_type,
             "source": source,
             "sections": enriched,
         }
+        if actual_tokens is not None:
+            result["actual_tokens"] = actual_tokens
+        return result
 
     def build_text_section_usage(
         self,
@@ -187,7 +192,7 @@ class ContextUsageService:
                 child_agent_usages = self._get_saved_child_agent_usages(extra_data)
 
         if actual_prompt_tokens is not None:
-            used_tokens = actual_prompt_tokens
+            used_tokens = max(estimated_tokens, actual_prompt_tokens)
             count_type = "official"
             source = "actual"
         else:
@@ -205,10 +210,13 @@ class ContextUsageService:
             "used_tokens": used_tokens,
             "remaining_tokens": context_window - used_tokens,
             "percent": percent,
+            "estimated_tokens": estimated_tokens,
             "count_type": count_type,
             "source": source,
             "sections": sections,
         }
+        if actual_prompt_tokens is not None:
+            primary_agent_usage["actual_tokens"] = actual_prompt_tokens
 
         return {
             "model_name": DEEPSEEK_CHAT.name,
@@ -217,6 +225,8 @@ class ContextUsageService:
             "used_tokens": used_tokens,
             "remaining_tokens": context_window - used_tokens,
             "percent": percent,
+            "estimated_tokens": estimated_tokens,
+            "actual_tokens": actual_prompt_tokens,
             "count_type": count_type,
             "source": source,
             "primary_agent_usage": primary_agent_usage,

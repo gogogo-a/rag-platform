@@ -395,9 +395,17 @@ class MessageService:
                             prompt_tokens = extra_data["usage"].get("prompt_tokens")
                             if isinstance(prompt_tokens, int):
                                 context_window = int(primary_usage.get("context_window") or 0)
-                                primary_usage["used_tokens"] = prompt_tokens
-                                primary_usage["remaining_tokens"] = context_window - prompt_tokens
-                                primary_usage["percent"] = min(100, round((prompt_tokens / context_window) * 100, 2)) if context_window > 0 else 0
+                                section_tokens = sum(
+                                    int(section.get("tokens") or 0)
+                                    for section in primary_usage.get("sections", [])
+                                    if isinstance(section, dict)
+                                )
+                                used_tokens = max(section_tokens, prompt_tokens)
+                                primary_usage["actual_tokens"] = prompt_tokens
+                                primary_usage["estimated_tokens"] = section_tokens
+                                primary_usage["used_tokens"] = used_tokens
+                                primary_usage["remaining_tokens"] = context_window - used_tokens
+                                primary_usage["percent"] = min(100, round((used_tokens / context_window) * 100, 2)) if context_window > 0 else 0
                                 primary_usage["source"] = "actual"
                                 primary_usage["count_type"] = "official"
                 if extra_data["expert_tasks"]:

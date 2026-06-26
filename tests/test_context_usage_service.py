@@ -150,10 +150,12 @@ class ContextUsageServiceTest(unittest.TestCase):
              patch.object(context_usage_service, "get_context_window", return_value=1000):
             result = asyncio.run(context_usage_service.get_session_context_usage("session-1"))
 
-        self.assertEqual(result["used_tokens"], 100)
+        self.assertEqual(result["used_tokens"], 3000)
+        self.assertEqual(result["actual_tokens"], 100)
+        self.assertEqual(result["estimated_tokens"], 3000)
         self.assertTrue(result["sections"])
         self.assertTrue(all(section["percent"] == 50 for section in result["sections"]))
-        self.assertEqual(result["primary_agent_usage"]["percent"], 10)
+        self.assertEqual(result["primary_agent_usage"]["percent"], 100)
 
     def test_context_usage_with_summary_counts_latest_summary_and_new_messages(self):
         FakeMessageModel.messages = [self.user_msg, self.ai_msg, self.summary_msg, self.new_msg]
@@ -172,7 +174,7 @@ class ContextUsageServiceTest(unittest.TestCase):
         self.assertNotIn("用户问题", question_section["content"])
         self.assertNotIn("AI 回答", question_section["content"])
 
-    def test_context_usage_prefers_saved_prompt_tokens(self):
+    def test_context_usage_keeps_section_total_when_saved_prompt_tokens_are_lower(self):
         self.ai_msg.extra_data = {"usage": {"prompt_tokens": 1234}}
         FakeMessageModel.messages = [self.user_msg, self.ai_msg]
 
@@ -183,8 +185,25 @@ class ContextUsageServiceTest(unittest.TestCase):
             result = asyncio.run(context_usage_service.get_session_context_usage("session-1"))
 
         self.assertEqual(result["used_tokens"], 1234)
+        self.assertEqual(result["actual_tokens"], 1234)
         self.assertEqual(result["source"], "actual")
         self.assertEqual(result["count_type"], "official")
+
+    def test_context_usage_never_reports_less_than_section_total(self):
+        self.ai_msg.extra_data = {"usage": {"prompt_tokens": 10}}
+        FakeMessageModel.messages = [self.user_msg, self.ai_msg]
+
+        with patch("internal.service.message.context_usage_service.MessageModel", FakeMessageModel), \
+             patch("internal.service.message.context_builder.MessageModel", FakeMessageModel), \
+             patch.object(context_usage_service, "_load_deepseek_tokenizer", return_value=None), \
+             patch.object(context_usage_service, "count_tokens", return_value=100), \
+             patch.object(context_usage_service, "get_context_window", return_value=1000):
+            result = asyncio.run(context_usage_service.get_session_context_usage("session-1"))
+
+        section_total = sum(section["tokens"] for section in result["sections"])
+        self.assertEqual(result["used_tokens"], section_total)
+        self.assertEqual(result["primary_agent_usage"]["used_tokens"], section_total)
+        self.assertEqual(result["actual_tokens"], 10)
 
     def test_context_usage_restores_child_agent_usages_from_latest_message(self):
         self.ai_msg.extra_data = {
