@@ -2,7 +2,7 @@
   <div class="rag-evaluation-management">
     <div class="page-header">
       <h2 class="page-title">评估管理</h2>
-      <div class="header-actions">
+      <div v-if="activeType !== 'cases'" class="header-actions">
         <el-select
           v-model="statusFilter"
           placeholder="评估状态"
@@ -28,17 +28,30 @@
         />
         <el-button :icon="RefreshRight" @click="handleRefresh">刷新</el-button>
       </div>
+      <div v-else class="header-actions">
+        <el-segmented v-model="caseSuiteType" :options="caseSuiteOptions" @change="fetchCases" />
+        <el-button :icon="RefreshRight" @click="fetchCases">刷新</el-button>
+      </div>
     </div>
 
-    <div class="case-panel">
+    <nav class="evaluation-subnav" aria-label="评估分类">
+      <button
+        v-for="item in evaluationTypes"
+        :key="item.value"
+        class="subnav-item"
+        :class="{ active: activeType === item.value }"
+        @click="changeType(item.value)"
+      >
+        <span>{{ item.label }}</span>
+        <em>{{ navCount(item.value) }}</em>
+      </button>
+    </nav>
+
+    <div v-if="activeType === 'cases'" class="page-content case-content">
       <div class="case-panel-header">
         <div>
           <h3>固定测试集</h3>
           <p>按 MCP、Agent 和组合流程分别验证对话质量</p>
-        </div>
-        <div class="case-actions">
-          <el-segmented v-model="caseSuiteType" :options="caseSuiteOptions" @change="fetchCases" />
-          <el-button :icon="RefreshRight" @click="fetchCases">刷新测试集</el-button>
         </div>
       </div>
       <el-table
@@ -84,19 +97,7 @@
       </div>
     </div>
 
-    <nav class="evaluation-subnav" aria-label="评估分类">
-      <button
-        v-for="item in evaluationTypes"
-        :key="item.value"
-        class="subnav-item"
-        :class="{ active: activeType === item.value }"
-        @click="changeType(item.value)"
-      >
-        <span>{{ item.label }}</span>
-        <em>{{ summary.type_counts?.[item.value] || 0 }}</em>
-      </button>
-    </nav>
-
+    <template v-else>
     <div class="summary-grid">
       <div class="summary-item">
         <span class="summary-label">总记录</span>
@@ -227,6 +228,7 @@
         />
       </div>
     </div>
+    </template>
 
     <el-dialog v-model="showDetailDialog" title="评估详情" width="760px">
       <div v-if="detailData" class="detail-content">
@@ -314,6 +316,7 @@ const caseSuiteOptions = [
   { label: '组合流程', value: 'flow' }
 ]
 const evaluationTypes = [
+  { label: '固定测试集', value: 'cases' },
   { label: 'RAG 评估', value: 'rag' },
   { label: '正常回复评估', value: 'normal_reply' },
   { label: '长上下文评估', value: 'long_context' },
@@ -452,7 +455,11 @@ const handleRunCase = async (row) => {
 const changeType = (type) => {
   activeType.value = type
   currentPage.value = 1
-  fetchRecords()
+  if (type === 'cases') {
+    fetchCases()
+  } else {
+    fetchRecords()
+  }
 }
 
 const handleSearch = () => {
@@ -505,6 +512,11 @@ const suiteTypeText = (type) => {
 const caseTargetText = (row) => {
   const tools = Array.isArray(row.required_tools) ? row.required_tools.join('、') : ''
   return row.target_agent || tools || row.description || '-'
+}
+
+const navCount = (value) => {
+  if (value === 'cases') return cases.value.length
+  return summary.value.type_counts?.[value] || 0
 }
 
 const statusText = (status) => {
@@ -639,14 +651,6 @@ watch(
   margin-bottom: 14px;
 }
 
-.case-panel {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 16px;
-}
-
 .case-panel-header {
   display: flex;
   align-items: flex-start;
@@ -667,14 +671,8 @@ watch(
   font-size: 13px;
 }
 
-.case-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
 .case-table {
-  max-height: 260px;
+  flex: 1;
   overflow: auto;
 }
 
