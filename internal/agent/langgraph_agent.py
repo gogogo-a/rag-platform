@@ -73,6 +73,57 @@ class StreamingCallbackHandler(BaseCallbackHandler):
         self.collected_tokens = []
 
 
+class FinalAnswerStreamingCallbackHandler(BaseCallbackHandler):
+    """只把 Final Answer 后的内容流给前端，前面的过程内容只收集不进正文。"""
+
+    def __init__(self, callback: Optional[Callable] = None):
+        self.callback = callback
+        self.collected_tokens = []
+        self.answer_started = False
+        self.strip_leading_answer_space = False
+        self.pending = ""
+        self.marker_pattern = re.compile(r"(\*\*)?\s*Final Answer\s*:\s*(\*\*)?")
+
+    def on_llm_new_token(self, token: str, **kwargs) -> None:
+        self.collected_tokens.append(token)
+        if self.answer_started:
+            if self.strip_leading_answer_space:
+                token = token.lstrip()
+                if not token:
+                    return
+                self.strip_leading_answer_space = False
+            if self.callback:
+                self.callback("llm_chunk", token)
+            return
+
+        self.pending += token
+        match = self.marker_pattern.search(self.pending)
+        if match:
+            self.answer_started = True
+            self.strip_leading_answer_space = True
+            answer_part = self.pending[match.end():].lstrip()
+            self.pending = ""
+            if answer_part and self.callback:
+                self.strip_leading_answer_space = False
+                self.callback("llm_chunk", answer_part)
+
+    def get_collected_text(self) -> str:
+        return "".join(self.collected_tokens)
+
+    def get_answer_text(self) -> str:
+        text = self.get_collected_text()
+        match = self.marker_pattern.search(text)
+        if match:
+            return text[match.end():].strip()
+        return text.strip()
+
+    def clear(self):
+        self.collected_tokens = []
+        self.answer_started = False
+        self.strip_leading_answer_space = False
+        self.pending = ""
+
+
 class LangGraphAgent:
     """
     LangGraph Agent - 基于状态图的智能代理
@@ -129,6 +180,7 @@ Thought:{agent_scratchpad}"""
         
         # 流式回调处理器
         self.streaming_handler = StreamingCallbackHandler(callback)
+        self.final_answer_streaming_handler = FinalAnswerStreamingCallbackHandler(callback)
         
         # 转换工具
         self.tools = self._convert_tools(tools)
@@ -141,6 +193,21 @@ Thought:{agent_scratchpad}"""
         # 构建状态图
         self.graph = self._build_graph()
         self.app = self.graph.compile()
+
+    def _emit_single_agent_process(self, phase: str, content: Any, step_index: int) -> None:
+        if not self.callback:
+            return
+        text = str(content or "").strip()
+        if not text:
+            return
+        self.callback("agent_process", {
+            "scope": "single",
+            "agent_key": "langgraph",
+            "agent_name": "AI 助手",
+            "phase": phase,
+            "content": text,
+            "step_index": step_index,
+        })
     
     def _convert_tools(self, tools: Dict[str, Callable]) -> List[Tool]:
         """转换工具为 LangChain Tool 格式"""
@@ -396,6 +463,21 @@ Thought:{agent_scratchpad}"""
         """调用 LLM 并只返回完整文本，不向前端发送 token。"""
         response = await self.llm.ainvoke(prompt)
         return response.content if hasattr(response, 'content') else str(response)
+
+    async def _stream_final_answer_call(self, prompt: str) -> str:
+        """流式调用最终汇总，只把 Final Answer 后的正文发送给前端。"""
+        self.final_answer_streaming_handler.clear()
+        try:
+            response = await self.llm.ainvoke(
+                prompt,
+                config={"callbacks": [self.final_answer_streaming_handler]}
+            )
+            raw_text = response.content if hasattr(response, 'content') else str(response)
+            answer_text = self.final_answer_streaming_handler.get_answer_text()
+            return answer_text or raw_text
+        except Exception as e:
+            logger.error(f"最终答案流式 LLM 调用失败: {e}")
+            raise
     
     async def _think_node(self, state: AgentState) -> AgentState:
         """思考节点 - 调用 LLM 决定下一步行动（流式输出）"""
@@ -416,10 +498,10 @@ Thought:{agent_scratchpad}"""
                 agent_scratchpad=state["agent_scratchpad"]
             )
             
-            # 已有工具结果后，模型可能先输出草稿再输出 Final Answer。
-            # 这里先完整收集再清洗，避免草稿和控制标记进入正式回答。
+            # 已有工具结果后，模型可能先输出过程说明再输出 Final Answer。
+            # 这里只把 Final Answer 后的正文流到正式回答，前面的过程不进正文。
             if state.get("tool_results"):
-                llm_output = await self._plain_llm_call(prompt)
+                llm_output = await self._stream_final_answer_call(prompt)
             else:
                 llm_output = await self._stream_llm_call(prompt)
             
@@ -489,8 +571,10 @@ Thought:{agent_scratchpad}"""
             tool_input = pending_action["tool_input"]
             
             # 发送 action 事件
+            action_content = f"{tool_name}({tool_input})"
             if self.callback:
-                self.callback("action", f"{tool_name}({tool_input})")
+                self.callback("action", action_content)
+            self._emit_single_agent_process("action", action_content, state["current_step"] * 2 + 1)
             
             if tool_name not in self.tool_map:
                 return {
@@ -510,8 +594,10 @@ Thought:{agent_scratchpad}"""
                     result = await result
             
             # 发送 observation 事件
+            observation_content = str(result)[:500]
             if self.callback:
-                self.callback("observation", str(result)[:500])
+                self.callback("observation", observation_content)
+            self._emit_single_agent_process("observation", observation_content, state["current_step"] * 2 + 2)
             
             # 解析工具结果，提取文档信息
             documents = []
@@ -677,8 +763,8 @@ Thought:{agent_scratchpad}"""
 
 请直接给出最终答案，不需要再调用工具。"""
             
-            # 汇总阶段先拿完整输出，清洗后再发送给前端，避免草稿内容进入正式回答。
-            final_answer = await self._plain_llm_call(summary_prompt)
+            # 汇总阶段流式输出 Final Answer 后的正文，避免草稿内容进入正式回答。
+            final_answer = await self._stream_final_answer_call(summary_prompt)
             
             # 清理答案格式
             if "Final Answer:" in final_answer:

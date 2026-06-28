@@ -12,10 +12,7 @@ const BLOCKED_PROCESS_WORDS = [
   ['sta', 'ck'],
   ['tra', 'ce'],
   ['top', 'ic='],
-  ['kaf', 'ka'],
-  ['接', '口'],
-  ['代', '码'],
-  ['修', '改']
+  ['kaf', 'ka']
 ].map((parts) => parts.join(''))
 const PROCESS_MARKER_ONLY_PATTERN = /^(thought|action|action input|observation|final answer|finalanswer|思考|操作|观测|输出|:|：)$/i
 
@@ -204,7 +201,7 @@ const isGeneratedSupervisorProcess = (process) => {
 
 export const getSupervisorProcesses = (message) => {
   return (message?.agentProcesses || [])
-    .filter((process) => process.scope === 'supervisor')
+    .filter((process) => ['supervisor', 'single'].includes(process.scope))
     .filter((process) => !isGeneratedSupervisorProcess(process))
     .sort((a, b) => a.stepIndex - b.stepIndex)
 }

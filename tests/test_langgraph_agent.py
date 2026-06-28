@@ -9,24 +9,29 @@ from pkg.constants.constants import AGENT_TYPE, ENABLE_QA_CACHE
 
 
 class FakeLLMService:
-    def __init__(self, responses):
-        self.llm = FakeLLM(responses)
+    def __init__(self, responses, stream_by_char=False):
+        self.llm = FakeLLM(responses, stream_by_char=stream_by_char)
 
     def get_history(self):
         return []
 
 
 class FakeLLM:
-    def __init__(self, responses):
+    def __init__(self, responses, stream_by_char=False):
         self.responses = list(responses)
         self.prompts = []
+        self.stream_by_char = stream_by_char
 
     async def ainvoke(self, prompt, config=None):
         self.prompts.append(prompt)
         response = self.responses.pop(0) if self.responses else "Final Answer: 默认回答"
         for callback in (config or {}).get("callbacks", []):
             if hasattr(callback, "on_llm_new_token"):
-                callback.on_llm_new_token(response)
+                if self.stream_by_char:
+                    for char in response:
+                        callback.on_llm_new_token(char)
+                else:
+                    callback.on_llm_new_token(response)
         return AIMessage(content=response)
 
 
@@ -179,6 +184,66 @@ class LangGraphAgentSelfHealingTest(unittest.TestCase):
         self.assertEqual(["要自制一个深度学习框架，可以从自动微分、计算图、张量对象和优化器开始。"], final_answer_events)
         self.assertNotIn("Final Answer", final_answer_events[0])
         self.assertNotIn("我先整理", final_answer_events[0])
+
+    def test_final_answer_after_tools_streams_only_answer_chunks(self):
+        events = []
+
+        async def knowledge_search(tool_input=None, **kwargs):
+            return '{"context":"DeZero 通过 60 个步骤自制深度学习框架。","documents":[],"results":[]}'
+
+        agent = LangGraphAgent(
+            llm_service=FakeLLMService([
+                "Thought: 先查资料\nAction: knowledge_search\nAction Input: {}",
+                "我先整理检索结果。\nFinal Answer: 要自制一个深度学习框架，先实现自动微分，再实现优化器。",
+            ], stream_by_char=True),
+            tools={"knowledge_search": knowledge_search},
+            max_iterations=3,
+            callback=lambda event_type, content: events.append((event_type, content)),
+        )
+
+        answer = asyncio.run(agent.run("我如何自制一个深度学习框架呢"))
+        action_index = next(index for index, event in enumerate(events) if event[0] == "action")
+        answer_chunks = [
+            content
+            for event_type, content in events[action_index + 1:]
+            if event_type == "llm_chunk"
+        ]
+
+        self.assertEqual("要自制一个深度学习框架，先实现自动微分，再实现优化器。", answer)
+        self.assertGreater(len(answer_chunks), 1)
+        streamed_text = "".join(answer_chunks)
+        self.assertEqual(answer, streamed_text)
+        self.assertNotIn("我先整理", streamed_text)
+        self.assertNotIn("Final Answer", streamed_text)
+
+    def test_tool_action_and_observation_are_emitted_as_agent_processes(self):
+        events = []
+
+        async def knowledge_search(tool_input=None, **kwargs):
+            return '{"context":"DeZero 通过 60 个步骤自制深度学习框架。","documents":[],"results":[]}'
+
+        agent = LangGraphAgent(
+            llm_service=FakeLLMService([
+                "Thought: 先查资料\nAction: knowledge_search\nAction Input: {}",
+                "Final Answer: 要自制一个深度学习框架，可以从自动微分开始。",
+            ]),
+            tools={"knowledge_search": knowledge_search},
+            max_iterations=3,
+            callback=lambda event_type, content: events.append((event_type, content)),
+        )
+
+        asyncio.run(agent.run("我如何自制一个深度学习框架呢"))
+        process_events = [
+            content for event_type, content in events if event_type == "agent_process"
+        ]
+
+        self.assertEqual(
+            ["action", "observation"],
+            [event["phase"] for event in process_events],
+        )
+        self.assertEqual({"single"}, {event["scope"] for event in process_events})
+        self.assertIn("knowledge_search", process_events[0]["content"])
+        self.assertIn("DeZero", process_events[1]["content"])
 
 
 if __name__ == "__main__":

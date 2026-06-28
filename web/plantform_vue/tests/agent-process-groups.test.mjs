@@ -343,4 +343,36 @@ assert.deepEqual(
   ]
 )
 
+const singleAgentMessage = {
+  role: 'assistant',
+  content: ''
+}
+
+applyAgentProcess(singleAgentMessage, {
+  scope: 'single',
+  agent_key: 'langgraph',
+  agent_name: 'AI 助手',
+  phase: 'action',
+  content: 'knowledge_search(我如何自制一个深度学习框架呢)',
+  step_index: 1
+})
+
+applyAgentProcess(singleAgentMessage, {
+  scope: 'single',
+  agent_key: 'langgraph',
+  agent_name: 'AI 助手',
+  phase: 'observation',
+  content: 'DeZero 通过 60 个步骤和少量代码自制深度学习框架。',
+  step_index: 2
+})
+
+assert.equal(hasExpertProcessBlocks(singleAgentMessage), true)
+assert.deepEqual(
+  getSupervisorProcesses(singleAgentMessage).map((item) => `${item.phase}:${item.content}`),
+  [
+    'action:knowledge_search(我如何自制一个深度学习框架呢)',
+    'observation:DeZero 通过 60 个步骤和少量代码自制深度学习框架。'
+  ]
+)
+
 console.log('agent process grouping verified')
